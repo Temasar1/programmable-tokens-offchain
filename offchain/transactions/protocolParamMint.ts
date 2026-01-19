@@ -6,6 +6,7 @@ import {
   conStr2,
   IWallet,
   MeshTxBuilder,
+  none,
   stringToHex,
 } from "@meshsdk/core";
 
@@ -13,54 +14,52 @@ import { provider, wallet } from "../../config";
 import { Cip113_scripts_standard } from "../deployment/standard";
 import cip113_scripts_subStandard from "../deployment/subStandard";
 import { ProtocolBootstrapParams } from "../types";
+import { deserializeAddress } from "@meshsdk/core-cst";
 
 /**
  * Bootstrap the CIP-113 protocol
  * This creates all the core contracts and initializes the protocol state
  */
-async function bootstrapProtocol(
-  networkId: 0 | 1,
-  refInputAddress: string,
+export async function bootstrapProtocol(
+  networkId: 0 | 1
 ): Promise<ProtocolBootstrapParams> {
   const changeAddress = await wallet.getChangeAddress();
   let walletUtxos = await wallet.getUtxos();
+  const collateral = (await wallet.getCollateral())[0];
+  const unusedAddress = (await wallet.getUnusedAddresses())[0];
 
-  if (walletUtxos.length < 3) {
-    const splitTxHash = await splitWallet(wallet, changeAddress);
+  const refInputAddress = deserializeAddress(unusedAddress)
+    .asBase()
+    ?.toAddress()
+    .toBech32();
+  const txhashh = await provider.fetchUTxOs(
+    "50dcbf81b36a741d683f3707a507875f78002ba67f55d882f0286b9795fa40fa"
+  );
 
-    if (!splitTxHash) {
-      throw new Error("Failed to submit split wallet transaction");
-    }
-
-    walletUtxos = await waitForUtxosWithTimeout(
-      splitTxHash
-    );
-  }
-
-  const utxo1 = walletUtxos[0];
-  const utxo2 = walletUtxos[walletUtxos.length - 1];
+  const utxo1 = txhashh[0];
+  const utxo2 = txhashh[2];
 
   const standard = new Cip113_scripts_standard(networkId);
   const subStandard = new cip113_scripts_subStandard(networkId);
   const protocolParamMint = await standard.protocol_param_mint(utxo1.input);
   const logicGlobal = await standard.programmable_logic_global(
-    protocolParamMint.script_hash,
+    protocolParamMint.script_hash
   );
   const logicBase = await standard.programmable_logic_base(
-    logicGlobal.script_hash,
+    logicGlobal.script_hash
   );
   const issuanceCborHex = await standard.issuance_cbor_hex_mint(utxo2.input);
   const registryMint = await standard.registry_mint(
     issuanceCborHex.policy_id,
-    utxo1.input,
+    utxo1.input
   );
   const registrySpend = await standard.registry_spend(
-    protocolParamMint.script_hash,
+    protocolParamMint.script_hash
   );
   const transferSubstandard = await subStandard.transfer_transfer_withdraw();
   const issuanceMint = await standard.issuance_mint(
     transferSubstandard.policy_id,
-    logicBase.policyId,
+    logicBase.policyId
   );
 
   const protocolParamNftName = stringToHex("ProtocolParams");
@@ -72,26 +71,26 @@ async function bootstrapProtocol(
   ]);
 
   const directoryDatum = conStr0([
-    byteString(""),
-    byteString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+    byteString(""), // Empty bytestring
+    byteString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), // Already hex
     conStr0([byteString("")]),
     conStr0([byteString("")]),
     byteString(""),
   ]);
 
   const protocolParamsAssets: Asset[] = [
-    { unit: "lovelace", quantity: "1300000" },
+    { unit: "lovelace", quantity: "1500000" },
     {
       unit: protocolParamMint.script_hash + protocolParamNftName,
       quantity: "1",
     },
   ];
   const directoryAssets: Asset[] = [
-    { unit: "lovelace", quantity: "1300000" },
+    { unit: "lovelace", quantity: "1500000" },
     { unit: registryMint.policy_id, quantity: "1" },
   ];
   const issuanceAssets: Asset[] = [
-    { unit: "lovelace", quantity: "1300000" },
+    { unit: "lovelace", quantity: "6500000" },
     { unit: issuanceCborHex.policy_id + issuanceNftName, quantity: "1" },
   ];
 
@@ -106,6 +105,8 @@ async function bootstrapProtocol(
     byteString(contractParts[1]),
   ]);
 
+  console.log(issuanceDatum);
+
   const txBuilder = new MeshTxBuilder({
     fetcher: provider,
     submitter: provider,
@@ -118,7 +119,7 @@ async function bootstrapProtocol(
     .txIn(utxo2.input.txHash, utxo2.input.outputIndex)
 
     .mintPlutusScriptV3()
-    .mint("1", registryMint.policy_id, "")
+    .mint("1", registryMint.policy_id, stringToHex(""))
     .mintingScript(registryMint.cbor)
     .mintRedeemerValue(conStr0([]), "JSON")
 
@@ -126,7 +127,7 @@ async function bootstrapProtocol(
     .mintPlutusScriptV3()
     .mint("1", protocolParamMint.script_hash, protocolParamNftName)
     .mintingScript(protocolParamMint.cbor)
-    .mintRedeemerValue(conStr1([]), "JSON")
+    .mintRedeemerValue(none(), "JSON")
 
     .mintPlutusScriptV3()
     .mint("1", issuanceCborHex.policy_id, issuanceNftName)
@@ -142,10 +143,10 @@ async function bootstrapProtocol(
     .txOut(issuanceCborHex.address, issuanceAssets)
     .txOutInlineDatumValue(issuanceDatum, "JSON")
 
-    .txOut(refInputAddress, [{ unit: "lovelace", quantity: "1200000" }])
+    .txOut(refInputAddress!, [{ unit: "lovelace", quantity: "2500000" }])
     .txOutReferenceScript(logicBase.cbor, "V3")
 
-    .txOut(refInputAddress, [{ unit: "lovelace", quantity: "1000000" }])
+    .txOut(refInputAddress!, [{ unit: "lovelace", quantity: "15500000" }])
     .txOutReferenceScript(logicGlobal.cbor, "V3")
 
     .txOut(changeAddress, [{ unit: "lovelace", quantity: "50000000" }])
@@ -153,6 +154,7 @@ async function bootstrapProtocol(
 
     .selectUtxosFrom(walletUtxos)
     .changeAddress(changeAddress)
+    .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .setNetwork(networkId === 0 ? "preview" : "mainnet");
   const unsignedTx = await txBuilder.complete();
 
@@ -230,7 +232,7 @@ async function splitWallet(wallet: IWallet, address: string): Promise<string> {
 async function waitForUtxosWithTimeout(
   txHash: string,
   timeoutMs = 120_000, // 2 minutes
-  intervalMs = 30_000, // 30 seconds
+  intervalMs = 30_000 // 30 seconds
 ) {
   const start = Date.now();
 
@@ -245,8 +247,6 @@ async function waitForUtxosWithTimeout(
   }
 
   throw new Error(
-    `Timed out after ${timeoutMs / 1000}s waiting for UTxOs from tx ${txHash}`,
+    `Timed out after ${timeoutMs / 1000}s waiting for UTxOs from tx ${txHash}`
   );
 }
-
-export { bootstrapProtocol };
