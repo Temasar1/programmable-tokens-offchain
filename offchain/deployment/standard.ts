@@ -193,10 +193,10 @@ export class Cip113_scripts_standard {
     const validator = findValidator("registry_mint", "mint");
 
     let paramScriptHash: string;
-    let parameter;
+    let parameter : TxInput;
     if (typeof params === "string") {
       paramScriptHash = params;
-      parameter = utxo;
+      parameter = utxo!;
     } else {
       paramScriptHash = params.directoryMintParams.issuanceScriptHash;
       parameter = params.directoryMintParams.txInput;
