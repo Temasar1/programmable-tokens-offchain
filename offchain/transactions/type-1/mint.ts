@@ -6,9 +6,9 @@ import {
   integer,
   MeshTxBuilder,
   stringToHex,
+  IWallet,
 } from "@meshsdk/core";
 
-import { provider, wallet } from "../../../config";
 import { Cip113_scripts_standard } from "../../deployment/standard";
 import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
@@ -18,6 +18,7 @@ const mint_programmable_tokens = async (
   params: ProtocolBootstrapParams,
   assetName: string,
   quantity: string,
+  wallet: IWallet,
   Network_id: 0 | 1,
   recipientAddress?: string | null,
 ) => {
@@ -46,7 +47,7 @@ const mint_programmable_tokens = async (
     substandard_issue.policy_id,
     params,
   );
-  const address = await getSmartWallet(recipientAddress ? recipientAddress : changeAddress, params);
+  const address = await getSmartWallet(recipientAddress ? recipientAddress : changeAddress, params, Network_id = 0);
 
   const issuanceRedeemer = conStr0([
     conStr1([byteString(substandard_issue.policy_id)]),
@@ -62,11 +63,7 @@ const mint_programmable_tokens = async (
 
   const programmableTokenDatum = conStr0([]);
 
-  const txBuilder = new MeshTxBuilder({
-    fetcher: provider,
-    submitter: provider,
-    verbose: true,
-  });
+  const txBuilder = new MeshTxBuilder();
   const unsignedTx = await txBuilder
     .withdrawalPlutusScriptV3()
     .withdrawal(substandard_issue.address, "0")
@@ -87,10 +84,7 @@ const mint_programmable_tokens = async (
     .changeAddress(changeAddress)
     .complete();
 
-  const signedTx = await wallet.signTx(unsignedTx);
-  const txHash = await wallet.submitTx(signedTx);
-
-  return txHash;
+  return unsignedTx;
 };
 
 export { mint_programmable_tokens };

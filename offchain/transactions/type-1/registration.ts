@@ -7,28 +7,24 @@ import {
   MeshTxBuilder,
   stringToHex,
   UTxO,
+  IWallet,
 } from "@meshsdk/core";
-import {
-  buildBaseAddress,
-  CredentialType,
-  deserializeAddress,
-  Hash28ByteBase16,
-} from "@meshsdk/core-cst";
 
-import { provider, wallet } from "../../../config";
+import { provider } from "../../../config";
 import { Cip113_scripts_standard } from "../../deployment/standard";
 import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
 import {
   ProtocolBootstrapParams,
   RegistryDatum,
 } from "../../types";
-import { parseRegistryDatum } from "../../utils";
+import { getSmartWallet, parseRegistryDatum } from "../../utils";
 
 const register_programmable_token = async (
   assetName: string,
   quantity: string,
   params: ProtocolBootstrapParams,
   subStandardName: "issuance" | "transfer",
+  wallet: IWallet,
   Network_id: 0 | 1,
   recipientAddress?: string | null,
 ) => {
@@ -37,6 +33,8 @@ const register_programmable_token = async (
   const walletUtxos = await wallet.getUtxos();
   const collateral = (await wallet.getCollateral())[0];
   let thirdPartyScriptHash: string;
+
+  console.log('change address', changeAddress)
 
   if (!collateral) {
     throw new Error("No collateral available");
@@ -47,7 +45,6 @@ const register_programmable_token = async (
 
   const registry_spend = await standardScript.registry_spend(params);
   const registry_mint = await standardScript.registry_mint(params);
-  const logic_base = await standardScript.programmable_logic_base(params);
   const substandard_issue = await substandardScript.transfer_issue_withdraw();
   const issuance_mint = await standardScript.issuance_mint(
     substandard_issue.policy_id,
@@ -127,18 +124,8 @@ const register_programmable_token = async (
     throw new Error("Could not parse current registry node");
   }
 
-  const stake_credential = deserializeAddress(
-    recipientAddress ? recipientAddress : changeAddress,
-  )
-    .asBase()
-    ?.getStakeCredential().hash!;
-  const targetAddress = buildBaseAddress(
-    0,
-    logic_base.policyId as Hash28ByteBase16,
-    stake_credential,
-    CredentialType.ScriptHash,
-  );
-
+  const targetAddress = await getSmartWallet(recipientAddress ? recipientAddress : changeAddress, params, Network_id = 0);
+  console.log('target address', targetAddress)
   const registryMintRedeemer = conStr1([
     byteString(prog_token_policyId),
     byteString(substandard_issue.policy_id),
@@ -179,12 +166,7 @@ const register_programmable_token = async (
     { unit: prog_token_policyId + stringToHex(assetName), quantity: quantity },
   ];
 
-  const txBuilder = new MeshTxBuilder({
-    fetcher: provider,
-    submitter: provider,
-    evaluator: provider,
-    verbose: true,
-  });
+  const txBuilder = new MeshTxBuilder();
 
   const unsignedTx = await txBuilder
     // Spend directory node
@@ -233,10 +215,7 @@ const register_programmable_token = async (
     .changeAddress(changeAddress)
     .complete();
 
-  const signedTx = await wallet.signTx(unsignedTx, true);
-  const txHash = await wallet.submitTx(signedTx);
-
-  return txHash;
+  return unsignedTx;
 };
 
 export { register_programmable_token };

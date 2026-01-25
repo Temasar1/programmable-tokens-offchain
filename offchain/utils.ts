@@ -46,12 +46,12 @@ export function parseRegistryDatum(datum: any): RegistryDatum | null {
   };
 }
 
-export const getSmartWallet = async (address: string, params: ProtocolBootstrapParams) => {
+export const getSmartWallet = async (address: string, params: ProtocolBootstrapParams, Network_id: 0 | 1) => {
   const credential = deserializeAddress(address).asBase()?.getStakeCredential().hash;
   if (!credential) {
     throw new Error("Credential not found");
   }
-  const standardScript = new Cip113_scripts_standard(0);
+  const standardScript = new Cip113_scripts_standard(Network_id);
   const logic_base = await standardScript.programmable_logic_base(params);
   const baseAddress = buildBaseAddress(
     0,

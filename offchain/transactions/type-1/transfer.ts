@@ -7,12 +7,13 @@ import {
   MeshTxBuilder,
   POLICY_ID_LENGTH,
   UTxO,
+  IWallet,
 } from "@meshsdk/core";
 import {
   deserializeAddress,
 } from "@meshsdk/core-cst";
 
-import { provider, wallet } from "../../../config";
+import { provider } from "../../../config";
 import { Cip113_scripts_standard } from "../../deployment/standard";
 import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
@@ -24,6 +25,7 @@ const transfer_programmable_token = async (
   recipientAddress: string,
   params: ProtocolBootstrapParams,
   Network_id: 0 | 1,
+  wallet: IWallet,
 ) => {
   const policyId = unit.substring(0, POLICY_ID_LENGTH);
   const changeAddress = await wallet.getChangeAddress();
@@ -43,8 +45,8 @@ const transfer_programmable_token = async (
     .asBase()
     ?.getStakeCredential().hash;
 
-  const targetAddress = await getSmartWallet(recipientAddress, params);
-  const senderAddress = await getSmartWallet(changeAddress, params);
+  const targetAddress = await getSmartWallet(recipientAddress, params, Network_id = 0);
+  const senderAddress = await getSmartWallet(changeAddress, params, Network_id = 0);
 
   const registryUtxos = await provider.fetchAddressUTxOs(
     registry_spend.address,
@@ -111,12 +113,7 @@ const transfer_programmable_token = async (
     });
   }
 
-  const txBuilder = new MeshTxBuilder({
-    fetcher: provider,
-    submitter: provider,
-    evaluator: provider,
-    verbose: true,
-  });
+  const txBuilder = new MeshTxBuilder();
 
   for (const utxo of selectedUtxos) {
     txBuilder
@@ -170,10 +167,7 @@ const transfer_programmable_token = async (
     .changeAddress(changeAddress);
 
   const unsignedTx = await txBuilder.complete();
-  const signedTx = await wallet.signTx(unsignedTx);
-  const txHash = await wallet.submitTx(signedTx);
-
-  return txHash;
+  return unsignedTx;
 };
 
 export { transfer_programmable_token };
