@@ -9,9 +9,7 @@ import {
   UTxO,
   IWallet,
 } from "@meshsdk/core";
-import {
-  deserializeAddress,
-} from "@meshsdk/core-cst";
+import { deserializeAddress } from "@meshsdk/core-cst";
 
 import { provider } from "../../../config";
 import { Cip113_scripts_standard } from "../../deployment/standard";
@@ -33,6 +31,7 @@ const transfer_programmable_token = async (
   const collateral = (await wallet.getCollateral())[0];
 
   if (!collateral) throw new Error("No collateral available");
+  if (!walletUtxos) throw new Error("Issuer wallet is empty");
 
   const standardScript = new Cip113_scripts_standard(Network_id);
   const substandardScript = new cip113_scripts_subStandard(Network_id);
@@ -41,18 +40,23 @@ const transfer_programmable_token = async (
   const registry_spend = await standardScript.registry_spend(params);
   const substandard_transfer =
     await substandardScript.transfer_transfer_withdraw();
-  const sender_credential = deserializeAddress(changeAddress)
+
+  const senderCredential = deserializeAddress(changeAddress)
     .asBase()
     ?.getStakeCredential().hash;
 
-  const targetAddress = await getSmartWallet(recipientAddress, params, Network_id = 0);
-  const senderAddress = await getSmartWallet(changeAddress, params, Network_id = 0);
+  const senderAddress = await getSmartWallet(changeAddress, params, Network_id);
+  const targetAddress = await getSmartWallet(
+    recipientAddress,
+    params,
+    Network_id,
+  );
 
   const registryUtxos = await provider.fetchAddressUTxOs(
     registry_spend.address,
   );
 
-  const progTokenRegistry = registryUtxos.find((utxo) => {
+  const progTokenRegistry = registryUtxos.find((utxo: UTxO) => {
     const datum = deserializeDatum(utxo.output.plutusData!);
     const parsedDatum = parseRegistryDatum(datum);
     return parsedDatum?.key === policyId;
@@ -73,7 +77,7 @@ const transfer_programmable_token = async (
   }
 
   let totalTokenBalance = 0;
-  senderProgTokenUtxos.forEach((utxo) => {
+  senderProgTokenUtxos.forEach((utxo: UTxO) => {
     const tokenAsset = utxo.output.amount.find((a) => a.unit === unit);
     if (tokenAsset) totalTokenBalance += Number(tokenAsset.quantity);
   });
@@ -113,7 +117,10 @@ const transfer_programmable_token = async (
     });
   }
 
-  const txBuilder = new MeshTxBuilder();
+  const txBuilder = new MeshTxBuilder({
+    fetcher: provider,
+    evaluator: provider,
+  });
 
   for (const utxo of selectedUtxos) {
     txBuilder
@@ -134,7 +141,8 @@ const transfer_programmable_token = async (
     .withdrawal(logic_global.reward_address, "0")
     .withdrawalScript(logic_global.cbor)
     .withdrawalRedeemerValue(programmableLogicGlobalRedeemer, "JSON")
-    .requiredSignerHash(sender_credential!.toString())
+    .requiredSignerHash(senderCredential!.toString())
+
     .txOut(changeAddress, [
       {
         unit: "lovelace",
@@ -166,8 +174,7 @@ const transfer_programmable_token = async (
     .setNetwork("preview")
     .changeAddress(changeAddress);
 
-  const unsignedTx = await txBuilder.complete();
-  return unsignedTx;
+  return await txBuilder.complete();
 };
 
 export { transfer_programmable_token };

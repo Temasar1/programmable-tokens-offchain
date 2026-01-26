@@ -13,6 +13,7 @@ import { Cip113_scripts_standard } from "../../deployment/standard";
 import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
 import { getSmartWallet } from "../../utils";
+import { provider } from "../../../config";
 
 const mint_programmable_tokens = async (
   params: ProtocolBootstrapParams,
@@ -47,7 +48,11 @@ const mint_programmable_tokens = async (
     substandard_issue.policy_id,
     params,
   );
-  const address = await getSmartWallet(recipientAddress ? recipientAddress : changeAddress, params, Network_id = 0);
+  const address = await getSmartWallet(
+    recipientAddress ? recipientAddress : changeAddress,
+    params,
+    (Network_id = 0),
+  );
 
   const issuanceRedeemer = conStr0([
     conStr1([byteString(substandard_issue.policy_id)]),
@@ -63,7 +68,9 @@ const mint_programmable_tokens = async (
 
   const programmableTokenDatum = conStr0([]);
 
-  const txBuilder = new MeshTxBuilder();
+  const txBuilder = new MeshTxBuilder({
+    fetcher: provider,
+  });
   const unsignedTx = await txBuilder
     .withdrawalPlutusScriptV3()
     .withdrawal(substandard_issue.address, "0")
