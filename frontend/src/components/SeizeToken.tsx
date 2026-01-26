@@ -100,7 +100,7 @@ export const SeizeToken = () => {
 
         <button
           type="submit"
-          className="w-full bg-linear-to-r from-blue-900 to-sky-600 text-white py-3 rounded-lg font-semibold hover:from-blue-800 hover:to-sky-500 transition-all shadow-lg hover:shadow-xl"
+          className="w-full bg-gradient-to-r from-blue-900 to-sky-600 text-white py-3 rounded-lg font-semibold hover:from-blue-800 hover:to-sky-500 transition-all shadow-lg hover:shadow-xl"
         >
           Seize Token
         </button>

@@ -47,7 +47,7 @@ export const HeroPanel = () => {
 
   if (!connected) {
     return (
-      <div className="bg-linear-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
+      <div className="bg-gradient-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
         <div className="text-center text-white">
           <h2 className="text-3xl font-bold mb-2">Programmable Tokens</h2>
           <p className="text-sky-100 mb-4">Connect your wallet to view your token balance</p>
@@ -62,7 +62,7 @@ export const HeroPanel = () => {
 
   if (loading) {
     return (
-      <div className="bg-linear-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
+      <div className="bg-gradient-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
         <div className="text-center text-white">
           <h2 className="text-3xl font-bold mb-2">Programmable Tokens</h2>
           <p className="text-sky-100">Loading...</p>
@@ -74,7 +74,7 @@ export const HeroPanel = () => {
   const nonAdaTokens = tokens.filter(t => t.unit !== "lovelace");
 
   return (
-    <div className="bg-linear-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
+    <div className="bg-gradient-to-r from-blue-900 via-blue-700 to-sky-600 rounded-2xl p-8 shadow-2xl border-2 border-blue-800">
       <div className="text-white">
         <h2 className="text-3xl font-bold mb-2">Programmable Tokens</h2>
         <p className="text-sky-100 mb-6">Your wallet balance</p>
@@ -110,8 +110,8 @@ export const HeroPanel = () => {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-sm truncate">{token.assetName || "Unknown Token"}</div>
-                    <div className="text-xs text-sky-200 truncate">
-                      {token.policyId ? `${token.policyId.substring(0, 20)}...` : token.unit.substring(0, 20) + "..."}
+                    <div className="text-xs text-sky-200 break-all font-mono">
+                      {token.policyId || token.unit}
                     </div>
                   </div>
                   <div className="ml-4 text-right">

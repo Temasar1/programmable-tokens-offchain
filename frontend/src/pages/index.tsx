@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { HeroPanel } from "@/components/HeroPanel";
 import { RegisterToken } from "@/components/RegisterToken";
 import { MintTokens } from "@/components/MintTokens";
@@ -19,6 +19,11 @@ type TabType =
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>("register");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const tabs = [
     { 
@@ -78,12 +83,23 @@ export default function Home() {
     }
   };
 
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-gradient-to-r from-white via-sky-50 to-sky-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-blue-800 font-semibold">Loading Interface...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-linear-to-r from-white via-sky-50 to-sky-100">
+    <div className="min-h-screen bg-gradient-to-r from-white via-sky-50 to-sky-100">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-5xl font-bold bg-linear-to-r from-blue-900 via-blue-700 to-sky-600 bg-clip-text text-transparent mb-3">
+          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-900 via-blue-700 to-sky-600 bg-clip-text text-transparent mb-3">
             Programmable Tokens
           </h1>
           <p className="text-xl text-blue-800">
@@ -105,7 +121,7 @@ export default function Home() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex-1 min-w-[120px] px-4 py-3 rounded-lg font-semibold transition-all ${
                   activeTab === tab.id
-                    ? `bg-linear-to-r ${tab.activeColor} text-white shadow-lg transform scale-105`
+                    ? `bg-gradient-to-r ${tab.activeColor} text-white shadow-lg transform scale-105`
                     : tab.inactiveColor
                 }`}
               >

@@ -83,7 +83,7 @@ export const FreezeToken = () => {
 
         <button
           type="submit"
-          className="w-full bg-linear-to-r from-sky-500 to-blue-700 text-white py-3 rounded-lg font-semibold hover:from-sky-400 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl"
+          className="w-full bg-gradient-to-r from-sky-500 to-blue-700 text-white py-3 rounded-lg font-semibold hover:from-sky-400 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl"
         >
           Freeze Token
         </button>

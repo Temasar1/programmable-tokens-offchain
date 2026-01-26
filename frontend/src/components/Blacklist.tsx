@@ -89,8 +89,8 @@ export const Blacklist = () => {
           type="submit"
           className={`w-full text-white py-3 rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl ${
             formData.action === "add"
-              ? "bg-linear-to-r from-blue-800 to-sky-400 hover:from-blue-700 hover:to-sky-300"
-              : "bg-linear-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500"
+              ? "bg-gradient-to-r from-blue-800 to-sky-400 hover:from-blue-700 hover:to-sky-300"
+              : "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500"
           }`}
         >
           {formData.action === "add" ? "Add to Blacklist" : "Remove from Blacklist"}
