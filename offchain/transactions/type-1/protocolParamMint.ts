@@ -11,8 +11,8 @@ import {
 } from "@meshsdk/core";
 
 import { provider, wallet } from "../../../config";
-import { Cip113_scripts_standard } from "../../deployment/standard";
-import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
+import { StandardScripts } from "../../deployment/standard";
+import { SubStandardScripts } from "../../deployment/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
 import { deserializeAddress } from "@meshsdk/core-cst";
 
@@ -39,35 +39,35 @@ export async function bootstrapProtocol(
   const utxo1 = txhashh[0];
   const utxo2 = txhashh[2];
 
-  const standard = new Cip113_scripts_standard(networkId);
-  const subStandard = new cip113_scripts_subStandard(networkId);
-  const protocolParamMint = await standard.protocol_param_mint(utxo1.input);
-  const logicGlobal = await standard.programmable_logic_global(
-    protocolParamMint.script_hash
+  const standard = new StandardScripts(networkId);
+  const subStandard = new SubStandardScripts(networkId);
+  const protocolParamMint = await standard.protocolParamMint(utxo1.input);
+  const programmableLogicGlobal = await standard.programmableLogicGlobal(
+    protocolParamMint.scriptHash
   );
-  const logicBase = await standard.programmable_logic_base(
-    logicGlobal.script_hash
+  const programmableLogicBase = await standard.programmableLogicBase(
+    programmableLogicGlobal.scriptHash
   );
-  const issuanceCborHex = await standard.issuance_cbor_hex_mint(utxo2.input);
-  const registryMint = await standard.registry_mint(
-    issuanceCborHex.policy_id,
+  const issuanceCborHex = await standard.issuanceCborHexMint(utxo2.input);
+  const registryMint = await standard.registryMint(
+    issuanceCborHex.policyId,
     utxo1.input
   );
-  const registrySpend = await standard.registry_spend(
-    protocolParamMint.script_hash
+  const registrySpend = await standard.registrySpend(
+    protocolParamMint.scriptHash
   );
-  const transferSubstandard = await subStandard.transfer_transfer_withdraw();
-  const issuanceMint = await standard.issuance_mint(
-    transferSubstandard.policy_id,
-    logicBase.policyId
+  const transferSubstandard = await subStandard.transfer();
+  const issuanceMint = await standard.issuanceMint(
+    transferSubstandard.policyId,
+    programmableLogicBase.policyId
   );
 
   const protocolParamNftName = stringToHex("ProtocolParams");
   const issuanceNftName = stringToHex("IssuanceCborHex");
 
   const protocolParamsDatum = conStr0([
-    byteString(registryMint.policy_id),
-    conStr1([byteString(logicBase.policyId)]),
+    byteString(registryMint.policyId),
+    conStr1([byteString(programmableLogicBase.policyId)]),
   ]);
 
   const directoryDatum = conStr0([
@@ -81,20 +81,20 @@ export async function bootstrapProtocol(
   const protocolParamsAssets: Asset[] = [
     { unit: "lovelace", quantity: "1500000" },
     {
-      unit: protocolParamMint.script_hash + protocolParamNftName,
+      unit: protocolParamMint.scriptHash + protocolParamNftName,
       quantity: "1",
     },
   ];
   const directoryAssets: Asset[] = [
     { unit: "lovelace", quantity: "1500000" },
-    { unit: registryMint.policy_id, quantity: "1" },
+    { unit: registryMint.policyId, quantity: "1" },
   ];
   const issuanceAssets: Asset[] = [
     { unit: "lovelace", quantity: "6500000" },
-    { unit: issuanceCborHex.policy_id + issuanceNftName, quantity: "1" },
+    { unit: issuanceCborHex.policyId + issuanceNftName, quantity: "1" },
   ];
 
-  const contractParts = issuanceMint.cbor.split(transferSubstandard.policy_id);
+  const contractParts = issuanceMint.cbor.split(transferSubstandard.policyId);
 
   if (contractParts.length !== 2) {
     throw new Error("Failed to split issuance contract template");
@@ -119,18 +119,18 @@ export async function bootstrapProtocol(
     .txIn(utxo2.input.txHash, utxo2.input.outputIndex)
 
     .mintPlutusScriptV3()
-    .mint("1", registryMint.policy_id, stringToHex(""))
+    .mint("1", registryMint.policyId, stringToHex(""))
     .mintingScript(registryMint.cbor)
     .mintRedeemerValue(conStr0([]), "JSON")
 
     // Protocol Params mint (Constr 1)
     .mintPlutusScriptV3()
-    .mint("1", protocolParamMint.script_hash, protocolParamNftName)
+    .mint("1", protocolParamMint.scriptHash, protocolParamNftName)
     .mintingScript(protocolParamMint.cbor)
     .mintRedeemerValue(none(), "JSON")
 
     .mintPlutusScriptV3()
-    .mint("1", issuanceCborHex.policy_id, issuanceNftName)
+    .mint("1", issuanceCborHex.policyId, issuanceNftName)
     .mintingScript(issuanceCborHex.cbor)
     .mintRedeemerValue(conStr2([]), "JSON")
 
@@ -144,10 +144,10 @@ export async function bootstrapProtocol(
     .txOutInlineDatumValue(issuanceDatum, "JSON")
 
     .txOut(refInputAddress!, [{ unit: "lovelace", quantity: "2500000" }])
-    .txOutReferenceScript(logicBase.cbor, "V3")
+    .txOutReferenceScript(programmableLogicBase.cbor, "V3")
 
     .txOut(refInputAddress!, [{ unit: "lovelace", quantity: "15500000" }])
-    .txOutReferenceScript(logicGlobal.cbor, "V3")
+    .txOutReferenceScript(programmableLogicGlobal.cbor, "V3")
 
     .txOut(changeAddress, [{ unit: "lovelace", quantity: "50000000" }])
     .txOut(changeAddress, [{ unit: "lovelace", quantity: "50000000" }])
@@ -169,34 +169,34 @@ export async function bootstrapProtocol(
         txHash: utxo1.input.txHash,
         outputIndex: utxo1.input.outputIndex,
       },
-      scriptHash: protocolParamMint.script_hash,
+      scriptHash: protocolParamMint.scriptHash,
     },
     programmableLogicGlobalPrams: {
-      protocolParamsScriptHash: protocolParamMint.script_hash,
-      scriptHash: logicGlobal.script_hash,
+      protocolParamsScriptHash: protocolParamMint.scriptHash,
+      scriptHash: programmableLogicGlobal.scriptHash,
     },
     programmableLogicBaseParams: {
-      programmableLogicGlobalScriptHash: logicGlobal.script_hash,
-      scriptHash: logicBase.policyId,
+      programmableLogicGlobalScriptHash: programmableLogicGlobal.scriptHash,
+      scriptHash: programmableLogicBase.policyId,
     },
     issuanceParams: {
       txInput: {
         txHash: utxo2.input.txHash,
         outputIndex: utxo2.input.outputIndex,
       },
-      scriptHash: issuanceCborHex.policy_id,
+      scriptHash: issuanceCborHex.policyId,
     },
     directoryMintParams: {
       txInput: {
         txHash: utxo1.input.txHash,
         outputIndex: utxo1.input.outputIndex,
       },
-      issuanceScriptHash: issuanceCborHex.policy_id,
-      scriptHash: registryMint.policy_id,
+      issuanceScriptHash: issuanceCborHex.policyId,
+      scriptHash: registryMint.policyId,
     },
     directorySpendParams: {
-      protocolParamsPolicyId: protocolParamMint.script_hash,
-      scriptHash: registrySpend.policy_id,
+      protocolParamsPolicyId: protocolParamMint.scriptHash,
+      scriptHash: registrySpend.policyId,
     },
     programmableBaseRefInput: {
       txHash,

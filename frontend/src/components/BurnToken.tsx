@@ -1,20 +1,19 @@
 import { useState, useEffect } from "react";
 import { useWallet } from "@meshsdk/react";
-import { transferProgrammableToken } from "../../../offchain/transactions/type-1";
+import { burnProgrammableTokens } from "../../../offchain/transactions/type-1/burn";
 import ProtocolBootstrapParams from "../../../offchain/protocol.json";
 import { TransactionResultPanel } from "./TransactionResultPanel";
 import getBalance, { TokenBalance } from "../lib/balance";
 import provider from "../lib/provider";
 import { substandardConfig } from "../lib/substandard";
 
-export const TransferToken = () => {
+export const BurnToken = () => {
   const { wallet, connected, address } = useWallet();
   const [tokens, setTokens] = useState<TokenBalance[]>([]);
   const [loadingTokens, setLoadingTokens] = useState(false);
   const [formData, setFormData] = useState({
     selectedToken: "",
     quantity: "",
-    recipientAddress: "",
   });
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -30,11 +29,12 @@ export const TransferToken = () => {
       setLoadingTokens(true);
       try {
         const balanceResult = await getBalance(provider, address);
-        // Filter out ADA/lovelace tokens
-        const nonAdaTokens = balanceResult.tokens.filter(t => t.unit !== "lovelace");
+        const nonAdaTokens = balanceResult.tokens.filter(
+          (t) => t.unit !== "lovelace"
+        );
         setTokens(nonAdaTokens);
-      } catch (error) {
-        console.error("Error fetching tokens:", error);
+      } catch (err) {
+        console.error("Error fetching tokens:", err);
         setTokens([]);
       } finally {
         setLoadingTokens(false);
@@ -44,18 +44,20 @@ export const TransferToken = () => {
     fetchTokens();
   }, [connected, wallet, address]);
 
-  const selectedToken = tokens.find(t => t.unit === formData.selectedToken);
-  const availableQuantity = selectedToken ? parseInt(selectedToken.quantity) : 0;
+  const selectedToken = tokens.find((t) => t.unit === formData.selectedToken);
+  const availableQuantity = selectedToken
+    ? parseInt(selectedToken.quantity)
+    : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!connected || !wallet) {
       setError("Please connect your wallet first");
       return;
     }
 
-    if (!formData.selectedToken) {
+    if (!formData.selectedToken || !selectedToken) {
       setError("Please select a token");
       return;
     }
@@ -65,33 +67,44 @@ export const TransferToken = () => {
     setTxHash(null);
 
     try {
-      // Get unsigned transaction using type-1 function
-      // formData.selectedToken is the full unit (policy ID + asset name hex)
-      const unsignedTx = await transferProgrammableToken(
-        formData.selectedToken,
-        formData.quantity,
-        formData.recipientAddress,
-        ProtocolBootstrapParams,
-        0, // Network_id: 0 for preview/testnet
-        wallet,
-        substandardConfig.blacklistNodePolicyId,
-      );
+      const policyId = selectedToken.policyId ?? formData.selectedToken.substring(0, 56);
+      const assetName = selectedToken.assetName ?? (() => {
+        const hex = formData.selectedToken.substring(56);
+        let decoded = "";
+        for (let i = 0; i < hex.length; i += 2) {
+          const charCode = parseInt(hex.substring(i, i + 2), 16);
+          if (charCode > 0 && charCode < 127) {
+            decoded += String.fromCharCode(charCode);
+          }
+        }
+        return decoded.trim() || hex;
+      })();
 
-      // Sign and submit
+      const unsignedTx = await burnProgrammableTokens({
+        params: ProtocolBootstrapParams,
+        tokenPolicyId: policyId,
+        assetName,
+        quantity: formData.quantity,
+        wallet,
+        networkId: 0,
+        issuerAdminPkh: substandardConfig.issuerAdminPkh,
+      });
+
       const signedTx = await wallet.signTx(unsignedTx);
       const hash = await wallet.submitTx(signedTx);
-      
-      // Ensure hash is a string and not an object
-      const hashString = typeof hash === 'string' ? hash : String(hash);
-      if (hashString && hashString !== '[object Object]') {
+
+      const hashString = typeof hash === "string" ? hash : String(hash);
+      if (hashString && hashString !== "[object Object]") {
         setTxHash(hashString);
-        console.log("Tx Hash:", hashString);
+        console.log("Burn Tx Hash:", hashString);
       } else {
         throw new Error("Invalid transaction hash received");
       }
     } catch (err: unknown) {
-      console.error("Error transferring token:", err);
-      setError(err instanceof Error ? err.message : "Failed to transfer token");
+      console.error("Error burning tokens:", err);
+      setError(
+        err instanceof Error ? err.message : "Failed to burn tokens"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -104,11 +117,17 @@ export const TransferToken = () => {
 
   return (
     <>
-      <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-blue-200">
-        <h3 className="text-2xl font-bold text-blue-900 mb-6">Transfer Token</h3>
+      <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-orange-200">
+        <h3 className="text-2xl font-bold text-orange-900 mb-6">
+          Burn Tokens
+        </h3>
+        <p className="text-sm text-orange-700 mb-4">
+          Permanently destroy programmable tokens. Only tokens in your smart
+          wallet can be burned.
+        </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-blue-800 mb-2">
+            <label className="block text-sm font-medium text-orange-800 mb-2">
               Select Token
             </label>
             {loadingTokens ? (
@@ -124,38 +143,35 @@ export const TransferToken = () => {
                 <select
                   value={formData.selectedToken}
                   onChange={(e) =>
-                    setFormData({ ...formData, selectedToken: e.target.value, quantity: "" })
+                    setFormData({
+                      ...formData,
+                      selectedToken: e.target.value,
+                      quantity: "",
+                    })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-sm"
+                  className="w-full px-4 py-2 border border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
                   required
                 >
                   <option value="">-- Select a token --</option>
                   {tokens.map((token) => (
                     <option key={token.unit} value={token.unit}>
-                      {token.assetName || "Unknown Token"} ({parseInt(token.quantity).toLocaleString()} available)
+                      {token.assetName || "Unknown Token"} (
+                      {parseInt(token.quantity).toLocaleString()} available)
                     </option>
                   ))}
                 </select>
                 {selectedToken && (
-                  <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                    <div className="text-xs text-blue-800 space-y-1">
+                  <div className="mt-2 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                    <div className="text-xs text-orange-800 space-y-1">
                       <div>
                         <span className="font-semibold">Policy ID:</span>{" "}
-                        <span className="font-mono break-all">{selectedToken.policyId}</span>
-                      </div>
-                      <div>
-                        <span className="font-semibold">Asset Name (Hex):</span>{" "}
                         <span className="font-mono break-all">
-                          {selectedToken.unit.substring(56)}
+                          {selectedToken.policyId}
                         </span>
                       </div>
                       <div>
-                        <span className="font-semibold">Available Quantity:</span>{" "}
+                        <span className="font-semibold">Available:</span>{" "}
                         {parseInt(selectedToken.quantity).toLocaleString()}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Full Unit:</span>{" "}
-                        <span className="font-mono break-all text-xs">{selectedToken.unit}</span>
                       </div>
                     </div>
                   </div>
@@ -165,8 +181,8 @@ export const TransferToken = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-blue-800 mb-2">
-              Quantity
+            <label className="block text-sm font-medium text-orange-800 mb-2">
+              Quantity to Burn
             </label>
             <input
               type="number"
@@ -176,40 +192,24 @@ export const TransferToken = () => {
               }
               min="1"
               max={availableQuantity}
-              className="w-full px-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-4 py-2 border border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
               placeholder="1"
               required
               disabled={!selectedToken}
             />
             {selectedToken && (
-              <p className="mt-1 text-xs text-blue-600">
+              <p className="mt-1 text-xs text-orange-600">
                 Maximum: {availableQuantity.toLocaleString()} tokens
               </p>
             )}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-blue-800 mb-2">
-              Recipient Address
-            </label>
-            <input
-              type="text"
-              value={formData.recipientAddress}
-              onChange={(e) =>
-                setFormData({ ...formData, recipientAddress: e.target.value })
-              }
-              className="w-full px-4 py-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="addr1..."
-              required
-            />
-          </div>
-
           <button
             type="submit"
-            disabled={isLoading || !connected}
-            className="w-full bg-gradient-to-r from-sky-600 to-blue-600 text-white py-3 rounded-lg font-semibold hover:from-sky-500 hover:to-blue-500 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isLoading || !connected || !selectedToken}
+            className="w-full bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 rounded-lg font-semibold hover:from-orange-500 hover:to-red-500 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? "Processing..." : "Transfer Token"}
+            {isLoading ? "Processing..." : "Burn Tokens"}
           </button>
         </form>
       </div>

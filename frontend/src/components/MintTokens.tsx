@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useWallet } from "@meshsdk/react";
-import { mint_programmable_tokens } from "../../../offchain/transactions/type-1";
+import { mintProgrammableTokens } from "../../../offchain/transactions/type-1";
 import ProtocolBootstrapParams from "../../../offchain/protocol.json";
 import { TransactionResultPanel } from "./TransactionResultPanel";
+import { substandardConfig } from "../lib/substandard";
 
 export const MintTokens = () => {
   const { wallet, connected } = useWallet();
@@ -29,13 +30,14 @@ export const MintTokens = () => {
 
     try {
       // Get unsigned transaction using type-1 function
-      const unsignedTx = await mint_programmable_tokens(
+      const unsignedTx = await mintProgrammableTokens(
         ProtocolBootstrapParams,
         formData.assetName,
         formData.quantity,
         wallet,
         0, // Network_id: 0 for preview/testnet
-        formData.recipientAddress || null
+        formData.recipientAddress || null,
+        substandardConfig.issuerAdminPkh,
       );
 
       // Sign and submit

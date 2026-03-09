@@ -1,7 +1,6 @@
-import { buildBaseAddress, CredentialType, deserializeAddress, Hash28ByteBase16 } from "@meshsdk/core-cst";
 import ProtocolBootstrapParams from "../../../offchain/protocol.json";
 import { IFetcher, stringToHex } from "@meshsdk/core";
-import { Cip113_scripts_standard } from "../../../offchain/deployment/standard";
+import { getSmartWalletAddress } from "../../../offchain/utils";
 
 export interface TokenBalance {
     unit: string;
@@ -13,34 +12,22 @@ export interface TokenBalance {
 export interface BalanceResult {
     tokens: TokenBalance[];
     adaBalance: string;
-    adaBalanceFormatted: string; // in ADA
+    adaBalanceFormatted: string;
+    smartWalletAddress: string;
     senderBaseAddress: string;
 }
 
 const getBalance = async (provider: IFetcher, walletAddress: string): Promise<BalanceResult> => {
-    const sender_credential = deserializeAddress(walletAddress).asBase()
-        ?.getStakeCredential().hash;
+    const networkId: 0 | 1 = walletAddress.startsWith("addr_test") ? 0 : 1;
 
-    if (!ProtocolBootstrapParams.programmableLogicBaseParams.scriptHash) {
-        throw new Error("Protocol bootstrap params are required");
-    }
-    const standardScript = new Cip113_scripts_standard(0);
-    const logic_base = await standardScript.programmable_logic_base(ProtocolBootstrapParams);
+    const smartWalletAddress = await getSmartWalletAddress(walletAddress, ProtocolBootstrapParams, networkId);
 
-    const senderBaseAddress = buildBaseAddress(
-        0,
-        logic_base.policyId as Hash28ByteBase16,
-        sender_credential!,
-        CredentialType.ScriptHash,
-        CredentialType.KeyHash,
-    );
-
-    const utxos = await provider.fetchAddressUTxOs(senderBaseAddress.toAddress().toBech32());
+    const utxos = await provider.fetchAddressUTxOs(smartWalletAddress);
     const walletUtxos = await provider.fetchAddressUTxOs(walletAddress);
-
-    let adaBalance = "0";
-    const adaAsset = walletUtxos.map(utxo => utxo.output.amount.find(asset => asset.unit === "lovelace"))
-    .reduce((acc, asset) => acc + (Number(asset?.quantity) || 0), 0);
+    const adaAsset = walletUtxos
+        .map(utxo => utxo.output.amount.find(asset => asset.unit === "lovelace"))
+        .reduce((acc, asset) => acc + (Number(asset?.quantity) || 0), 0);
+    const adaBalance = adaAsset.toString();
     const adaBalanceFormatted = (adaAsset / 1_000_000).toString();
 
     const tokenBalances: TokenBalance[] = [];
@@ -81,7 +68,7 @@ const getBalance = async (provider: IFetcher, walletAddress: string): Promise<Ba
                     }
                 }
                 assetName = decoded.trim() || assetNameHex;
-            } catch (e) {
+            } catch {
                 assetName = assetNameHex;
             }
         }
@@ -108,7 +95,8 @@ const getBalance = async (provider: IFetcher, walletAddress: string): Promise<Ba
         tokens: tokenBalances,
         adaBalance,
         adaBalanceFormatted,
-        senderBaseAddress: senderBaseAddress.toAddress().toBech32(),
+        smartWalletAddress,
+        senderBaseAddress: smartWalletAddress,
     };
 };
 

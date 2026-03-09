@@ -4,7 +4,6 @@ import {
   conStr1,
   integer,
   PlutusScript,
-  scriptHash,
   TxInput,
 } from "@meshsdk/common";
 import {
@@ -17,266 +16,159 @@ import { scriptHashToRewardAddress } from "@meshsdk/core-cst";
 import { ProtocolBootstrapParams } from "../types";
 import { findValidator } from "../utils";
 
-export class Cip113_scripts_standard {
-  private networkID: number;
-  constructor(networkID: number) {
-    this.networkID = networkID;
-  }
-  async blacklist_mint(utxo_reference: TxInput, manager_pubkey_hash: string) {
-    const validator = findValidator("blacklist_mint", "mint");
+export class StandardScripts {
+  constructor(private readonly networkID: number) {}
+
+  private build(
+    validatorName: string,
+    params: object[],
+  ): { cbor: string; plutusScript: PlutusScript } {
     const cbor = applyParamsToScript(
-      validator,
-      [
-        conStr(0, [
-          byteString(utxo_reference.txHash),
-          integer(utxo_reference.outputIndex),
-        ]),
-        byteString(manager_pubkey_hash),
-      ],
+      findValidator(validatorName),
+      params,
       "JSON",
     );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const policy_id = resolveScriptHash(cbor, "V3");
-
-    return { cbor, plutus_script, policy_id };
+    return { cbor, plutusScript: { code: cbor, version: "V3" } };
   }
 
-  async issuance_mint(
+  private txRef(utxo: TxInput) {
+    return conStr(0, [byteString(utxo.txHash), integer(utxo.outputIndex)]);
+  }
+
+  private resolveParam(
+    params: ProtocolBootstrapParams | string,
+    extract: (p: ProtocolBootstrapParams) => string,
+    errorMsg: string,
+  ): string {
+    const hash = typeof params === "string" ? params : extract(params);
+    if (!hash) throw new Error(errorMsg);
+    return hash;
+  }
+
+  private toAddress(
+    plutusScript: PlutusScript,
+    staking: string | undefined = undefined,
+  ) {
+    return serializePlutusScript(plutusScript, staking, this.networkID, false)
+      .address;
+  }
+
+  async issuanceMint(
     mintingLogicCredential: string,
     params: ProtocolBootstrapParams | string,
   ) {
-    const validator = findValidator("issuance_mint", "mint");
-    let paramScriptHash: string;
-    if (typeof params === "string") {
-      paramScriptHash = params;
-    } else {
-      paramScriptHash = params?.programmableLogicBaseParams.scriptHash!;
-    }
-    if (!paramScriptHash)
-      throw new Error("could not resolve issuance mint parameters");
-    const cbor = applyParamsToScript(
-      validator,
+    const paramScriptHash = this.resolveParam(
+      params,
+      (p) => p.programmableLogicBaseParams.scriptHash!,
+      "could not resolve issuance mint parameters",
+    );
+    const { cbor, plutusScript } = this.build(
+      "issuance_mint.issuance_mint.mint",
       [
         conStr1([byteString(paramScriptHash)]),
         conStr1([byteString(mintingLogicCredential)]),
       ],
-      "JSON",
     );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const policy_id = resolveScriptHash(cbor, "V3");
-    const address = serializePlutusScript(
-      plutus_script,
-      undefined,
-      this.networkID,
-      false,
-    ).address;
-    return { cbor, plutus_script, policy_id, address };
-  }
-
-  async issuance_cbor_hex_mint(utxo_reference: TxInput) {
-    const validator = findValidator("issuance_cbor_hex_mint", "mint");
-    const cbor = applyParamsToScript(
-      validator,
-      [
-        conStr(0, [
-          byteString(utxo_reference.txHash),
-          integer(utxo_reference.outputIndex),
-        ]),
-      ],
-      "JSON",
-    );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const policy_id = resolveScriptHash(cbor, "V3");
-    const address = serializePlutusScript(
-      plutus_script,
-      undefined,
-      this.networkID,
-      false,
-    ).address;
-    return { cbor, plutus_script, policy_id, address };
-  }
-
-  async programmable_logic_base(params: ProtocolBootstrapParams | string) {
-    const validator = findValidator("programmable_logic_base", "spend");
-    let paramScriptHash: string;
-    if (typeof params === "string") {
-      paramScriptHash = params;
-    } else {
-      paramScriptHash = params?.programmableLogicGlobalPrams.scriptHash!;
-    }
-    if (!paramScriptHash)
-      throw new Error("could not resolve logic base parameter");
-    const cbor = applyParamsToScript(
-      validator,
-      [conStr1([byteString(paramScriptHash)])],
-      "JSON",
-    );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const policyId = resolveScriptHash(cbor, "V3");
     return {
       cbor,
-      plutus_script,
-      policyId,
+      plutusScript,
+      policyId: resolveScriptHash(cbor, "V3"),
+      address: this.toAddress(plutusScript),
     };
   }
 
-  async programmable_logic_global(params: ProtocolBootstrapParams | string) {
-    const validator = findValidator("programmable_logic_global", "withdraw");
-    let paramScriptHash: string;
-    if (typeof params === "string") {
-      paramScriptHash = params;
-    } else {
-      paramScriptHash = params?.protocolParams.scriptHash!;
-    }
-    if (!paramScriptHash)
-      throw new Error("could not resolve logic global parameter");
-    const cbor = applyParamsToScript(
-      validator,
-      [scriptHash(paramScriptHash)],
-      "JSON",
+  async issuanceCborHexMint(utxo_reference: TxInput) {
+    const { cbor, plutusScript } = this.build(
+      "issuance_cbor_hex_mint.issuance_cbor_hex_mint.mint",
+      [this.txRef(utxo_reference)],
     );
-    const script_hash = resolveScriptHash(cbor, "V3");
-    const reward_address = scriptHashToRewardAddress(
-      script_hash,
-      this.networkID,
-    );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
+    return {
+      cbor,
+      plutusScript,
+      policyId: resolveScriptHash(cbor, "V3"),
+      address: this.toAddress(plutusScript),
     };
-
-    return { cbor, plutus_script, reward_address, script_hash };
   }
 
-  async protocol_param_mint(utxo_reference: TxInput) {
-    const validator = findValidator("protocol_params_mint", "mint");
-    const cbor = applyParamsToScript(
-      validator,
-      [
-        conStr(0, [
-          byteString(utxo_reference.txHash),
-          integer(utxo_reference.outputIndex),
-        ]),
-      ],
-      "JSON",
+  async programmableLogicBase(params: ProtocolBootstrapParams | string) {
+    const paramScriptHash = this.resolveParam(
+      params,
+      (p) => p.programmableLogicGlobalPrams.scriptHash!,
+      "could not resolve logic base parameter",
     );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const script_hash = resolveScriptHash(cbor, "V3");
-    const address = serializePlutusScript(
-      plutus_script,
-      undefined,
-      this.networkID,
-      false,
-    ).address;
-    return { cbor, plutus_script, script_hash, address };
+    const { cbor, plutusScript } = this.build(
+      "programmable_logic_base.programmable_logic_base.spend",
+      [conStr1([byteString(paramScriptHash)])],
+    );
+    return { cbor, plutusScript, policyId: resolveScriptHash(cbor, "V3") };
   }
 
-  async registry_mint(
-    params: ProtocolBootstrapParams | string,
-    utxo?: TxInput,
-  ) {
-    const validator = findValidator("registry_mint", "mint");
+  async programmableLogicGlobal(params: ProtocolBootstrapParams | string) {
+    const paramScriptHash = this.resolveParam(
+      params,
+      (p) => p.protocolParams.scriptHash!,
+      "could not resolve logic global parameter",
+    );
+    const { cbor, plutusScript } = this.build(
+      "programmable_logic_global.programmable_logic_global.withdraw",
+      [byteString(paramScriptHash)],
+    );
+    const scriptHash = resolveScriptHash(cbor, "V3");
+    return {
+      cbor,
+      plutusScript,
+      scriptHash,
+      rewardAddress: scriptHashToRewardAddress(scriptHash, this.networkID),
+    };
+  }
 
-    let paramScriptHash: string;
-    let parameter : TxInput;
-    if (typeof params === "string") {
-      paramScriptHash = params;
-      parameter = utxo!;
-    } else {
-      paramScriptHash = params.directoryMintParams.issuanceScriptHash;
-      parameter = params.directoryMintParams.txInput;
-    }
+  async protocolParamMint(utxo_reference: TxInput) {
+    const { cbor, plutusScript } = this.build(
+      "protocol_params_mint.protocol_params_mint.mint",
+      [this.txRef(utxo_reference)],
+    );
+    const scriptHash = resolveScriptHash(cbor, "V3");
+    return {
+      cbor,
+      plutusScript,
+      scriptHash,
+      address: this.toAddress(plutusScript),
+    };
+  }
 
-    if (!parameter)
+  async registryMint(params: ProtocolBootstrapParams | string, utxo?: TxInput) {
+    const paramScriptHash =
+      typeof params === "string"
+        ? params
+        : params.directoryMintParams.issuanceScriptHash;
+    const txInput =
+      typeof params === "string" ? utxo! : params.directoryMintParams.txInput;
+    if (!txInput)
       throw new Error("register mint utxo parameter could not resolve");
     if (!paramScriptHash)
-      throw new Error("registry mint param Script hash could not resolve");
-
-    const cbor = applyParamsToScript(
-      validator,
-      [
-        conStr(0, [
-          byteString(parameter.txHash),
-          integer(parameter.outputIndex),
-        ]),
-        scriptHash(paramScriptHash),
-      ],
-      "JSON",
+      throw new Error("registry mint param script hash could not resolve");
+    const { cbor, plutusScript } = this.build(
+      "registry_mint.registry_mint.mint",
+      [this.txRef(txInput), byteString(paramScriptHash)],
     );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const policy_id = resolveScriptHash(cbor, "V3");
-    return { cbor, plutus_script, policy_id };
+    return { cbor, plutusScript, policyId: resolveScriptHash(cbor, "V3") };
   }
 
-  async registry_spend(params: ProtocolBootstrapParams | string) {
-    const validator = findValidator("registry_spend", "spend");
-    let paramScriptHash: string;
-    if (typeof params === "string") {
-      paramScriptHash = params;
-    } else {
-      paramScriptHash = params.protocolParams.scriptHash;
-    }
-    if (!paramScriptHash)
-      throw new Error("could not resolve params for registry spend");
-    const cbor = applyParamsToScript(
-      validator,
-      [scriptHash(paramScriptHash)],
-      "JSON",
+  async registrySpend(params: ProtocolBootstrapParams | string) {
+    const paramScriptHash = this.resolveParam(
+      params,
+      (p) => p.protocolParams.scriptHash,
+      "could not resolve params for registry spend",
     );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const address = serializePlutusScript(
-      plutus_script,
-      "",
-      this.networkID,
-      false,
-    ).address;
-    const policy_id = resolveScriptHash(cbor, "V3");
+    const { cbor, plutusScript } = this.build(
+      "registry_spend.registry_spend.spend",
+      [byteString(paramScriptHash)],
+    );
     return {
       cbor,
-      plutus_script,
-      address,
-      policy_id,
+      plutusScript,
+      policyId: resolveScriptHash(cbor, "V3"),
+      address: this.toAddress(plutusScript, ""),
     };
-  }
-
-  async example_transfer_logic(permitted_credential: string) {
-    const validator = findValidator("example_transfer_logic", "withdraw");
-    const cbor = applyParamsToScript(
-      validator,
-      [scriptHash(permitted_credential)],
-      "JSON",
-    );
-    const plutus_script: PlutusScript = {
-      code: cbor,
-      version: "V3",
-    };
-    const address = serializePlutusScript(
-      plutus_script,
-      permitted_credential,
-      this.networkID,
-      true,
-    ).address;
-    return { cbor, plutus_script, address };
   }
 }

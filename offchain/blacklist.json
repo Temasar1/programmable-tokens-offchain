@@ -1,0 +1,14 @@
+{
+  "blacklistMintBootstrap": {
+    "txInput": {
+      "txHash": "2ced5257558d2be4ccf3b4344cb85dda7968ba6937f6c9546ca42c050f441b48",
+      "outputIndex": 1
+    },
+    "adminPubKeyHash": "32e7e00eae28502a2aa271cf4202b1b01b94ca8efe642e380c93d5e2",
+    "scriptHash": "f0545b7d10dd074ddf09232407925f192bb5dafbe14ca2e0ea0f63dc"
+  },
+  "blacklistSpendBootstrap": {
+    "blacklistMintScriptHash": "f0545b7d10dd074ddf09232407925f192bb5dafbe14ca2e0ea0f63dc",
+    "scriptHash": "38b1c326b4f70c7589cca3b2fdedbaf1124195819a304bb4bf337c1e"
+  }
+}

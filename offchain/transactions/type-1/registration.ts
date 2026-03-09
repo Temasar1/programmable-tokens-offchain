@@ -11,211 +11,167 @@ import {
 } from "@meshsdk/core";
 
 import { provider } from "../../../config";
-import { Cip113_scripts_standard } from "../../deployment/standard";
-import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
+import { StandardScripts } from "../../deployment/standard";
+import { SubStandardScripts } from "../../deployment/subStandard";
+import { ProtocolBootstrapParams, RegistryDatum } from "../../types";
 import {
-  ProtocolBootstrapParams,
-  RegistryDatum,
-} from "../../types";
-import { getSmartWallet, parseRegistryDatum } from "../../utils";
+  getSmartWalletAddress,
+  parseRegistryDatum,
+  selectEnoughAdaUtxos,
+  walletConfig,
+} from "../../utils";
 
-const register_programmable_token = async (
+export const registerProgrammableToken = async (
   assetName: string,
   quantity: string,
   params: ProtocolBootstrapParams,
-  subStandardName: "issuance" | "transfer",
   wallet: IWallet,
-  Network_id: 0 | 1,
+  NetworkId: 0 | 1,
+  issuerAdminPkh: string,
+  blacklistNodePolicyId: string,
   recipientAddress?: string | null,
 ) => {
-  // Get wallet details
-  const changeAddress = await wallet.getChangeAddress();
-  const walletUtxos = await wallet.getUtxos();
-  const collateral = (await wallet.getCollateral())[0];
-  let thirdPartyScriptHash: string;
+  const { changeAddress, walletUtxos, collateral } = await walletConfig(wallet);
 
-  console.log('change address', changeAddress)
+  const standard = new StandardScripts(NetworkId);
+  const substandard = new SubStandardScripts(NetworkId);
 
-  if (!collateral) {
-    throw new Error("No collateral available");
-  }
-
-  const standardScript = new Cip113_scripts_standard(Network_id);
-  const substandardScript = new cip113_scripts_subStandard(Network_id);
-
-  const registry_spend = await standardScript.registry_spend(params);
-  const registry_mint = await standardScript.registry_mint(params);
-  const substandard_issue = await substandardScript.transfer_issue_withdraw();
-  const issuance_mint = await standardScript.issuance_mint(
-    substandard_issue.policy_id,
-    params,
+  const registrySpend = await standard.registrySpend(params);
+  const registryMint = await standard.registryMint(params);
+  const substandardIssue = await substandard.issuerAdmin(issuerAdminPkh);
+  const substandardTransfer = await substandard.customTransfer(
+    params.programmableLogicBaseParams.scriptHash,
+    blacklistNodePolicyId,
   );
-  const substandard_transfer =
-    await substandardScript.transfer_transfer_withdraw();
+  const issuanceMint = await standard.issuanceMint(substandardIssue.policyId, params);
 
-  const bootstrapTxHash = params.txHash;
-  const protocolParamsUtxos = await provider.fetchUTxOs(bootstrapTxHash, 0);
+  const adminUtxos = await selectEnoughAdaUtxos(wallet);
+  if (!adminUtxos.length) throw new Error("No admin UTxOs found for fees");
 
-  if (!protocolParamsUtxos) {
-    throw new Error("could not resolve protocol params");
-  }
+  // Fetch reference UTxOs
+  const protocolParamsUtxo = (await provider.fetchUTxOs(params.txHash, 0))?.[0];
+  if (!protocolParamsUtxo) throw new Error("Could not resolve protocol params");
 
-  const issuanceUtxos = await provider.fetchUTxOs(bootstrapTxHash, 2);
-  if (!issuanceUtxos) {
-    throw new Error("Issuance UTXO not found");
-  }
+  const issuanceUtxo = (await provider.fetchUTxOs(params.txHash, 2))?.[0];
+  if (!issuanceUtxo) throw new Error("Could not resolve issuance params");
 
-  const protocolParamsUtxo = protocolParamsUtxos[0];
-  const issuanceUtxo = issuanceUtxos[0];
+  const progTokenPolicyId = issuanceMint.policyId;
 
-  if (!substandard_transfer._cbor) {
-    throw new Error("Substandard transfer contract not found");
-  }
-
-  if (subStandardName === "issuance") {
-    thirdPartyScriptHash = substandard_issue.policy_id;
-  } else if (subStandardName === "transfer") {
-    thirdPartyScriptHash = substandard_transfer.policy_id;
-  } else {
-    thirdPartyScriptHash = "";
-  }
-
-  // Get issuance contract and programmable token policy ID
-  const prog_token_policyId = issuance_mint.policy_id;
-  const registryEntries = await provider.fetchAddressUTxOs(
-    registry_spend.address,
-  );
-  const registryEntriesDatums = registryEntries.flatMap((utxo: UTxO) =>
-    deserializeDatum(utxo.output.plutusData!),
-  );
-  const existingEntry = registryEntriesDatums
-    .map(parseRegistryDatum)
+  // Verify not already registered
+  const registryEntries = await provider.fetchAddressUTxOs(registrySpend.address);
+  const alreadyRegistered = registryEntries
+    .filter((u: UTxO) => !!u.output.plutusData)
+    .map((u: UTxO) => parseRegistryDatum(deserializeDatum(u.output.plutusData!)))
     .filter((d): d is RegistryDatum => d !== null)
-    .find((d) => d.key === prog_token_policyId);
+    .some((d) => d.key === progTokenPolicyId);
 
-  if (existingEntry) {
-    throw new Error(`Token policy ${prog_token_policyId} already registered`); //check after if this is correct
-  }
+  if (alreadyRegistered) throw new Error(`Token policy ${progTokenPolicyId} already registered`);
 
-  const nodeToReplaceUtxo = registryEntries.find((utxo) => {
-    const datum = deserializeDatum(utxo.output.plutusData!);
-    const parsedDatum = parseRegistryDatum(datum);
-
-    if (!parsedDatum) {
-      console.log("Could not parse registry datum");
-      return false;
-    }
-
-    const after = parsedDatum.key.localeCompare(prog_token_policyId) < 0;
-    const before = prog_token_policyId.localeCompare(parsedDatum.next) < 0;
-
-    return after && before;
+  // Find the linked-list node to replace (key < progTokenPolicyId < next)
+  const nodeToReplaceUtxo = registryEntries.find((utxo: UTxO) => {
+    if (!utxo.output.plutusData) return false;
+    const d = parseRegistryDatum(deserializeDatum(utxo.output.plutusData!));
+    return d && d.key.localeCompare(progTokenPolicyId) < 0 && progTokenPolicyId.localeCompare(d.next) < 0;
   });
+  if (!nodeToReplaceUtxo) throw new Error("Could not find node to replace");
 
-  if (!nodeToReplaceUtxo) {
-    throw new Error("Could not find node to replace");
-  }
+  const existingNode = parseRegistryDatum(deserializeDatum(nodeToReplaceUtxo.output.plutusData!));
+  if (!existingNode) throw new Error("Could not parse current registry node");
 
-  const existingRegistryNodeDatum = parseRegistryDatum(
-    deserializeDatum(nodeToReplaceUtxo.output.plutusData!),
+  // Find the existing NFT in the node being replaced (kept in the updated spend output)
+  const existingNftUnit = nodeToReplaceUtxo.output.amount.find(
+    (a) => a.unit !== "lovelace" && a.unit.startsWith(registryMint.policyId),
+  )?.unit;
+  if (!existingNftUnit) throw new Error("Could not find existing registry NFT in node to replace");
+
+  const targetAddress = await getSmartWalletAddress(
+    recipientAddress ?? changeAddress,
+    params,
+    NetworkId,
   );
 
-  if (!existingRegistryNodeDatum) {
-    throw new Error("Could not parse current registry node");
-  }
-
-  const targetAddress = await getSmartWallet(recipientAddress ? recipientAddress : changeAddress, params, Network_id = 0);
-  console.log('target address', targetAddress)
+  // Redeemers
+  const issuanceRedeemer = conStr0([conStr1([byteString(substandardIssue.policyId)])]);
   const registryMintRedeemer = conStr1([
-    byteString(prog_token_policyId),
-    byteString(substandard_issue.policy_id),
+    byteString(progTokenPolicyId),
+    byteString(substandardIssue.policyId),
   ]);
 
-  const issuanceRedeemer = conStr0([
-    conStr1([byteString(substandard_issue.policy_id)]),
+  // Datums: updated previous node (next → new token) and new node
+  const updatedSpendDatum = conStr0([
+    byteString(existingNode.key),
+    byteString(progTokenPolicyId),           // next updated to new token
+    byteString(existingNode.transferScriptHash),
+    byteString(existingNode.thirdPartyScriptHash),
+    byteString(existingNode.metadata),
   ]);
 
-  const previous_node_datum = conStr0([
-    byteString(existingRegistryNodeDatum.key),
-    byteString(prog_token_policyId),
-    byteString(existingRegistryNodeDatum.transferScriptHash),
-    byteString(existingRegistryNodeDatum.thirdPartyScriptHash),
-    byteString(existingRegistryNodeDatum.metadata),
-  ]);
-
-  const new_node_datum = conStr0([
-    byteString(prog_token_policyId),
-    byteString(existingRegistryNodeDatum.next),
-    byteString(substandard_transfer.policy_id),
-    byteString(thirdPartyScriptHash),
+  const newMintDatum = conStr0([
+    byteString(progTokenPolicyId),            // key
+    byteString(existingNode.next),            // next = old next
+    byteString(substandardTransfer.policyId), // transfer script hash
+    byteString(substandardIssue.policyId),    // third-party = issue admin
     byteString(""),
   ]);
 
+  // Assets
   const directorySpendAssets: Asset[] = [
     { unit: "lovelace", quantity: "1500000" },
-    { unit: registry_mint.policy_id, quantity: "1" },
+    { unit: existingNftUnit, quantity: "1" },
   ];
-
   const directoryMintAssets: Asset[] = [
     { unit: "lovelace", quantity: "1500000" },
-    { unit: registry_mint.policy_id + prog_token_policyId, quantity: "1" },
+    { unit: registryMint.policyId + progTokenPolicyId, quantity: "1" },
   ];
-
   const programmableTokenAssets: Asset[] = [
     { unit: "lovelace", quantity: "1500000" },
-    { unit: prog_token_policyId + stringToHex(assetName), quantity: quantity },
+    { unit: progTokenPolicyId + stringToHex(assetName), quantity: quantity },
   ];
 
-  const txBuilder = new MeshTxBuilder();
+  const tx = new MeshTxBuilder({ fetcher: provider, evaluator: provider });
 
-  const unsignedTx = await txBuilder
-    // Spend directory node
-    .spendingPlutusScriptV3()
+  for (const utxo of adminUtxos) {
+    tx.txIn(utxo.input.txHash, utxo.input.outputIndex, utxo.output.amount, utxo.output.address);
+  }
+
+  tx.spendingPlutusScriptV3()
     .txIn(nodeToReplaceUtxo.input.txHash, nodeToReplaceUtxo.input.outputIndex)
-    .txInScript(registry_spend.cbor)
+    .txInScript(registrySpend.cbor)
     .txInRedeemerValue(conStr0([]), "JSON")
     .txInInlineDatumPresent()
-    // Output: Updated directory spend node
-    // Withdraw from substandard issue contract
+
     .withdrawalPlutusScriptV3()
-    .withdrawal(substandard_issue.address, "0")
-    .withdrawalScript(substandard_issue._cbor)
+    .withdrawal(substandardIssue.rewardAddress, "0")
+    .withdrawalScript(substandardIssue.cbor)
     .withdrawalRedeemerValue(conStr0([]), "JSON")
-    // Mint programmable token
+
     .mintPlutusScriptV3()
-    .mint(quantity, prog_token_policyId, stringToHex(assetName))
-    .mintingScript(issuance_mint.cbor)
+    .mint(quantity, progTokenPolicyId, stringToHex(assetName))
+    .mintingScript(issuanceMint.cbor)
     .mintRedeemerValue(issuanceRedeemer, "JSON")
-    // Mint directory NFT
+
     .mintPlutusScriptV3()
-    .mint("1", registry_mint.policy_id, prog_token_policyId)
-    .mintingScript(registry_mint.cbor)
+    .mint("1", registryMint.policyId, progTokenPolicyId)
+    .mintingScript(registryMint.cbor)
     .mintRedeemerValue(registryMintRedeemer, "JSON")
-    // Output: Programmable token to recipient
 
-    .txOut(targetAddress.toAddress().toBech32(), programmableTokenAssets)
+    .txOut(targetAddress, programmableTokenAssets)
     .txOutInlineDatumValue(conStr0([]), "JSON")
-    // Output: New directory mint node
-    .txOut(registry_spend.address, directorySpendAssets)
-    .txOutInlineDatumValue(previous_node_datum, "JSON")
-    .txOut(registry_spend.address, directoryMintAssets)
-    .txOutInlineDatumValue(new_node_datum, "JSON")
 
-    .readOnlyTxInReference(
-      protocolParamsUtxo!.input.txHash,
-      protocolParamsUtxo!.input.outputIndex,
-    )
-    .readOnlyTxInReference(
-      issuanceUtxo!.input.txHash,
-      issuanceUtxo!.input.outputIndex,
-    )
-    // Collateral and UTxO selection
+    .txOut(registrySpend.address, directorySpendAssets)
+    .txOutInlineDatumValue(updatedSpendDatum, "JSON")
+
+    .txOut(registrySpend.address, directoryMintAssets)
+    .txOutInlineDatumValue(newMintDatum, "JSON")
+
+    .readOnlyTxInReference(protocolParamsUtxo.input.txHash, protocolParamsUtxo.input.outputIndex)
+    .readOnlyTxInReference(issuanceUtxo.input.txHash, issuanceUtxo.input.outputIndex)
+
+    .requiredSignerHash(issuerAdminPkh)
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .selectUtxosFrom(walletUtxos)
-    .changeAddress(changeAddress)
-    .complete();
+    .setNetwork(NetworkId === 0 ? "preview" : "mainnet")
+    .changeAddress(changeAddress);
 
-  return unsignedTx;
+  return tx.complete();
 };
-
-export { register_programmable_token };

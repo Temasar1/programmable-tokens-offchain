@@ -1,14 +1,15 @@
 import { IFetcher, IWallet } from "@meshsdk/core";
 
 import {
-  mint_programmable_tokens,
-  register_programmable_token,
-  transfer_programmable_token,
+  mintProgrammableTokens,
+  registerProgrammableToken,
+  transferProgrammableToken,
 } from "../type-1";
 
 import { ProtocolBootstrapParams } from "../../types";
 import { ISubmitter } from "@meshsdk/core";
 import { IEvaluator } from "@meshsdk/core";
+import { burnProgrammableTokens } from "../type-1/burn";
 
 export interface ProgrammableTokenContractInput {
   wallet: IWallet;
@@ -28,21 +29,22 @@ export class ProgrammableTokenContract {
     this.networkId = inputs.networkId || 0;
   }
 
-  getWallet() {
-    return this.wallet;
-  }
-
   registerToken = async (
     assetName: string,
     quantity: string,
+    issuerAdminPkh: string,
+    blacklistNodePolicyId: string,
+    recipientAddress?: string | null,
   ): Promise<string> => {
-    const unsignedTx = await register_programmable_token(
+    const unsignedTx = await registerProgrammableToken(
       assetName,
       quantity,
       this.params,
-      "issuance",
       this.wallet,
       this.networkId,
+      issuerAdminPkh,
+      blacklistNodePolicyId,
+      recipientAddress,
     );
     const signedTx = await this.wallet.signTx(unsignedTx);
     const txHash = await this.wallet.submitTx(signedTx);
@@ -50,7 +52,7 @@ export class ProgrammableTokenContract {
   };
 
   mintTokens = async (assetName: string, quantity: string): Promise<string> => {
-    const unsignedTx = await mint_programmable_tokens(
+    const unsignedTx = await mintProgrammableTokens(
       this.params,
       assetName,
       quantity,
@@ -67,7 +69,7 @@ export class ProgrammableTokenContract {
     quantity: string,
     recipientAddress: string,
   ): Promise<string> => {
-    const unsignedTx = await transfer_programmable_token(
+    const unsignedTx = await transferProgrammableToken(
       unit,
       quantity,
       recipientAddress,
@@ -75,6 +77,30 @@ export class ProgrammableTokenContract {
       this.networkId,
       this.wallet,
     );
+    const signedTx = await this.wallet.signTx(unsignedTx);
+    const txHash = await this.wallet.submitTx(signedTx);
+    return txHash;
+  };
+
+  burnToken = async (
+    policyId: string,
+    assetName: string,
+    quantity: string,
+    txhash: string,
+    outputIndex: number,
+    issuerAdminPkh: string,
+  ): Promise<string> => {
+    const unsignedTx = await burnProgrammableTokens({
+      wallet: this.wallet,
+      params: this.params,
+      tokenPolicyId: policyId,
+      assetName: assetName,
+      quantity: quantity,
+      txhash,
+      outputIndex,
+      issuerAdminPkh,
+      networkId: this.networkId,
+    });
     const signedTx = await this.wallet.signTx(unsignedTx);
     const txHash = await this.wallet.submitTx(signedTx);
     return txHash;

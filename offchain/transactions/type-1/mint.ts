@@ -3,65 +3,61 @@ import {
   byteString,
   conStr0,
   conStr1,
-  integer,
   MeshTxBuilder,
   stringToHex,
   IWallet,
+  deserializeAddress,
 } from "@meshsdk/core";
 
-import { Cip113_scripts_standard } from "../../deployment/standard";
-import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
+import { StandardScripts } from "../../deployment/standard";
+import { SubStandardScripts } from "../../deployment/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
-import { getSmartWallet } from "../../utils";
+import { getSmartWalletAddress, walletConfig } from "../../utils";
 import { provider } from "../../../config";
 
-const mint_programmable_tokens = async (
+export const mintProgrammableTokens = async (
   params: ProtocolBootstrapParams,
   assetName: string,
   quantity: string,
   wallet: IWallet,
-  Network_id: 0 | 1,
+  NetworkId: 0 | 1,
   recipientAddress?: string | null,
 ) => {
-  const changeAddress = await wallet.getChangeAddress();
-  const walletUtxos = await wallet.getUtxos();
-  const collateral = (await wallet.getCollateral())[0];
+  const { changeAddress, walletUtxos, collateral } = await walletConfig(wallet);
+  const standardScript = new StandardScripts(NetworkId);
+  const substandardScript = new SubStandardScripts(NetworkId);
+  const bootstrapTxHash = params.txHash;
 
-  if (!collateral) {
-    throw new Error("No collateral available");
-  }
+  const adminPubKeyHash = deserializeAddress(changeAddress).pubKeyHash;
 
-  if (!walletUtxos) {
-    throw new Error("Issuer wallet is empty");
-  }
+  const issuanceUtxos = await provider.fetchUTxOs(bootstrapTxHash, 2);
+  if (!issuanceUtxos?.length) throw new Error("Issuance UTXO not found");
 
-  const standardScript = new Cip113_scripts_standard(Network_id);
-  const substandardScript = new cip113_scripts_subStandard(Network_id);
+  const substandardIssue = await substandardScript.issuerAdmin(adminPubKeyHash);
+  const substandardIssueCbor = substandardIssue.cbor;
+  const substandardPolicyId = substandardIssue.policyId;
 
-  const substandard_issue = await substandardScript.transfer_issue_withdraw();
-
-  if (!substandard_issue.address) {
-    throw new Error("Substandard issuance address not found");
-  }
-
-  const issuance_mint = await standardScript.issuance_mint(
-    substandard_issue.policy_id,
+  const issuanceMint = await standardScript.issuanceMint(
+    substandardPolicyId,
     params,
   );
-  const address = await getSmartWallet(
+  const smartWalletAddress = await getSmartWalletAddress(
     recipientAddress ? recipientAddress : changeAddress,
     params,
-    (Network_id = 0),
+    NetworkId,
   );
 
   const issuanceRedeemer = conStr0([
-    conStr1([byteString(substandard_issue.policy_id)]),
+    conStr1([byteString(substandardPolicyId)]),
   ]);
 
   const programmableTokenAssets: Asset[] = [
-    { unit: "lovelace", quantity: "1500000" },
     {
-      unit: issuance_mint.policy_id + stringToHex(assetName),
+      unit: "lovelace",
+      quantity: "1300000",
+    },
+    {
+      unit: issuanceMint.policyId + stringToHex(assetName),
       quantity: quantity,
     },
   ];
@@ -70,28 +66,28 @@ const mint_programmable_tokens = async (
 
   const txBuilder = new MeshTxBuilder({
     fetcher: provider,
+    submitter: provider,
   });
   const unsignedTx = await txBuilder
     .withdrawalPlutusScriptV3()
-    .withdrawal(substandard_issue.address, "0")
-    .withdrawalScript(substandard_issue._cbor)
-    .withdrawalRedeemerValue(integer(100), "JSON")
+    .withdrawal(substandardIssue.rewardAddress, "0")
+    .withdrawalScript(substandardIssueCbor)
+    .withdrawalRedeemerValue(conStr0([]), "JSON")
 
     .mintPlutusScriptV3()
-    .mint(quantity, issuance_mint.policy_id, stringToHex(assetName))
-    .mintingScript(issuance_mint.cbor)
+    .mint(quantity, issuanceMint.policyId, stringToHex(assetName))
+    .mintingScript(issuanceMint.cbor)
     .mintRedeemerValue(issuanceRedeemer, "JSON")
 
-    .txOut(address, programmableTokenAssets)
+    .txOut(smartWalletAddress, programmableTokenAssets)
     .txOutInlineDatumValue(programmableTokenDatum, "JSON")
 
+    .requiredSignerHash(adminPubKeyHash)
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .selectUtxosFrom(walletUtxos)
-    .setNetwork("preview")
+    .setNetwork(NetworkId === 0 ? "preview" : "mainnet")
     .changeAddress(changeAddress)
     .complete();
 
   return unsignedTx;
 };
-
-export { mint_programmable_tokens };
