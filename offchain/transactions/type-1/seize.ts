@@ -18,7 +18,6 @@ import { ProtocolBootstrapParams } from "../../types";
 import {
   getSmartWalletAddress,
   parseRegistryDatum,
-  selectEnoughAdaUtxos,
   walletConfig,
 } from "../../utils";
 
@@ -49,8 +48,12 @@ export const seizeProgrammableTokens = async (
 
   const recipientSmartWallet = await getSmartWalletAddress(targetAddress, params, NetworkId);
 
-  const adminUtxos = await selectEnoughAdaUtxos(wallet);
-  if (adminUtxos.length === 0) throw new Error("No admin UTxOs found for fees");
+  const feePayerUtxo = walletUtxos.find(
+    (u) =>
+      BigInt(u.output.amount.find((a) => a.unit === "lovelace")?.quantity ?? "0") >
+      10_000_000n,
+  );
+  if (!feePayerUtxo) throw new Error("No UTXO with enough ADA for fees found");
 
   const utxosAtRef = await provider.fetchUTxOs(utxoTxHash, utxoOutputIndex);
   const utxoToSeize = utxosAtRef?.[0];
@@ -58,6 +61,8 @@ export const seizeProgrammableTokens = async (
   if (!utxoToSeize.output.plutusData) {
     throw new Error("UTXO to seize must have inline datum");
   }
+
+  const totalInputs = 2; // feePayerUtxo + utxoToSeize
 
   const tokenAsset = utxoToSeize.output.amount.find((a) => a.unit === unit);
   if (!tokenAsset) throw new Error("UTXO does not contain the specified token");
@@ -78,15 +83,6 @@ export const seizeProgrammableTokens = async (
   const protocolParamsUtxo = protocolParamsUtxos?.[0];
   if (!protocolParamsUtxo) throw new Error("could not resolve protocol params");
 
-  // Sort inputs to determine on-chain index of the seize input
-  const sortedInputs = [...adminUtxos, utxoToSeize].sort(compareUtxos);
-  const seizeInputIndex = sortedInputs.findIndex(
-    (u) =>
-      u.input.txHash === utxoToSeize.input.txHash &&
-      u.input.outputIndex === utxoToSeize.input.outputIndex,
-  );
-  if (seizeInputIndex === -1) throw new Error("Could not find seize input index");
-
   // Sort reference inputs to determine on-chain index of the registry
   const sortedRefInputs = [protocolParamsUtxo, progTokenRegistry].sort(compareUtxos);
   const registryRefInputIndex = sortedRefInputs.findIndex(
@@ -98,9 +94,8 @@ export const seizeProgrammableTokens = async (
 
   const programmableGlobalRedeemer = conStr1([
     integer(registryRefInputIndex),
-    list([integer(seizeInputIndex)]),
-    integer(2),
-    integer(1),
+    integer(1), // outputs_start_idx (skip recipient output)
+    integer(totalInputs), // length_inputs
   ]);
 
   const tokenDatum = conStr0([]);
@@ -121,23 +116,18 @@ export const seizeProgrammableTokens = async (
     fetcher: provider,
     evaluator: provider,
   });
+  txBuilder.txEvaluationMultiplier = 1.3;
 
-  for (const utxo of adminUtxos) {
-    txBuilder.txIn(
-      utxo.input.txHash,
-      utxo.input.outputIndex,
-      utxo.output.amount,
-      utxo.output.address,
-    );
-  }
+  txBuilder.txIn(
+    feePayerUtxo.input.txHash,
+    feePayerUtxo.input.outputIndex
+  );
 
   txBuilder
     .spendingPlutusScriptV3()
     .txIn(
       utxoToSeize.input.txHash,
-      utxoToSeize.input.outputIndex,
-      utxoToSeize.output.amount,
-      utxoToSeize.output.address,
+      utxoToSeize.input.outputIndex
     )
     .txInScript(programmableLogicBase.cbor)
     .txInRedeemerValue(conStr0([]), "JSON")

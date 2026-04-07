@@ -28,7 +28,12 @@ export class StandardScripts {
       params,
       "JSON",
     );
-    return { cbor, plutusScript: { code: cbor, version: "V3" } };
+    
+    const plutusScript: PlutusScript = {
+      code: cbor,
+      version: "V3"
+    }
+    return { cbor, plutusScript};
   }
 
   private txRef(utxo: TxInput) {
@@ -48,7 +53,7 @@ export class StandardScripts {
   private toAddress(
     plutusScript: PlutusScript,
     staking: string | undefined = undefined,
-  ) {
+  ) : string{
     return serializePlutusScript(plutusScript, staking, this.networkID, false)
       .address;
   }
@@ -77,10 +82,23 @@ export class StandardScripts {
     };
   }
 
-  async issuanceCborHexMint(utxo_reference: TxInput) {
+  async issuanceCborHexMint(
+    params: ProtocolBootstrapParams | string,
+    utxo?: TxInput,
+  ) {
+    const paramAlwaysFailHash = this.resolveParam(
+      params,
+      (p) => p.issuanceParams.alwaysFailScriptHash!,
+      "could not resolve cbor hex mint always fail hash",
+    );
+    const txInput =
+      typeof params === "string" ? utxo : params.issuanceParams.txInput;
+    if (!txInput)
+      throw new Error("cbor hex mint utxo parameter could not resolve");
+
     const { cbor, plutusScript } = this.build(
       "issuance_cbor_hex_mint.issuance_cbor_hex_mint.mint",
-      [this.txRef(utxo_reference)],
+      [this.txRef(txInput), byteString(paramAlwaysFailHash)],
     );
     return {
       cbor,
@@ -122,10 +140,23 @@ export class StandardScripts {
     };
   }
 
-  async protocolParamMint(utxo_reference: TxInput) {
+  async protocolParamMint(
+    params: ProtocolBootstrapParams | string,
+    utxo?: TxInput,
+  ) {
+    const paramAlwaysFailHash = this.resolveParam(
+      params,
+      (p) => p.protocolParams.alwaysFailScriptHash!,
+      "could not resolve protocol param mint always fail hash",
+    );
+    const txInput =
+      typeof params === "string" ? utxo : params.protocolParams.txInput;
+    if (!txInput)
+      throw new Error("protocol param mint utxo parameter could not resolve");
+
     const { cbor, plutusScript } = this.build(
       "protocol_params_mint.protocol_params_mint.mint",
-      [this.txRef(utxo_reference)],
+      [this.txRef(txInput), byteString(paramAlwaysFailHash)],
     );
     const scriptHash = resolveScriptHash(cbor, "V3");
     return {
@@ -142,7 +173,7 @@ export class StandardScripts {
         ? params
         : params.directoryMintParams.issuanceScriptHash;
     const txInput =
-      typeof params === "string" ? utxo! : params.directoryMintParams.txInput;
+      typeof params === "string" ? utxo : params.directoryMintParams.txInput;
     if (!txInput)
       throw new Error("register mint utxo parameter could not resolve");
     if (!paramScriptHash)
@@ -168,7 +199,20 @@ export class StandardScripts {
       cbor,
       plutusScript,
       policyId: resolveScriptHash(cbor, "V3"),
-      address: this.toAddress(plutusScript, ""),
+      address: this.toAddress(plutusScript),
+    };
+  }
+
+  async alwaysFail(nonce: string) {
+    const { cbor, plutusScript } = this.build(
+      "always_fail.always_fail.spend",
+      [byteString(nonce)],
+    );
+    return {
+      cbor,
+      plutusScript,
+      address: this.toAddress(plutusScript),
+      scriptHash: resolveScriptHash(cbor, "V3"),
     };
   }
 }

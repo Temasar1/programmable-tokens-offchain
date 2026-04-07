@@ -68,7 +68,8 @@ export const mintProgrammableTokens = async (
     fetcher: provider,
     submitter: provider,
   });
-  const unsignedTx = await txBuilder
+  txBuilder.txEvaluationMultiplier = 1.3;
+  txBuilder
     .withdrawalPlutusScriptV3()
     .withdrawal(substandardIssue.rewardAddress, "0")
     .withdrawalScript(substandardIssueCbor)
@@ -86,8 +87,5 @@ export const mintProgrammableTokens = async (
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .selectUtxosFrom(walletUtxos)
     .setNetwork(NetworkId === 0 ? "preview" : "mainnet")
-    .changeAddress(changeAddress)
-    .complete();
-
-  return unsignedTx;
+  return await txBuilder.complete();
 };

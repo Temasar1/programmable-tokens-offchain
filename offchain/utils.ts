@@ -2,7 +2,7 @@ import cbor from "cbor";
 
 import subStandardPlutusScriptFreeze from "../aiken-workspace-subStandard/freeze-and-seize/plutus.json";
 import subStandardPlutusScriptDummy from "../aiken-workspace-subStandard/dummy/plutus.json";
-import standardPlutusScript from "../aiken-workspace-standard/plutus.json";
+import standardPlutusScript from "../aiken-programmable-standard-2/plutus.json";
 import { BlacklistBootstrap, BlacklistDatum, RegistryDatum } from "./types";
 import {
   buildBaseAddress,
@@ -46,16 +46,45 @@ export const walletConfig = async (wallet: IWallet) => {
   return { changeAddress, walletUtxos, collateral };
 };
 
+function extractBytes(field: any): string {
+  if (!field) return "";
+
+  if (typeof field === "string") return field;
+
+  if (field.bytes) return field.bytes;
+
+  if (field.fields && field.fields.length > 0) {
+    const inner = field.fields[0];
+    if (typeof inner === "string") return inner;
+    if (inner?.bytes) return inner.bytes;
+  }
+
+  return "";
+}
+
+export type RegistryCredential = {
+  hash: string;
+  index: number;
+};
+
 export function parseRegistryDatum(datum: any): RegistryDatum | null {
   if (!datum?.fields || datum.fields.length < 5) {
     return null;
   }
+
+  const getCredential = (field: any): RegistryCredential => {
+    return {
+      hash: extractBytes(field),
+      index: field.constructor ?? 0,
+    };
+  };
+
   return {
-    key: datum.fields[0].bytes,
-    next: datum.fields[1].bytes,
-    transferScriptHash: datum.fields[2].bytes,
-    thirdPartyScriptHash: datum.fields[3].bytes,
-    metadata: datum.fields[4].bytes,
+    key: extractBytes(datum.fields[0]),
+    next: extractBytes(datum.fields[1]),
+    transferScript: getCredential(datum.fields[2]),
+    thirdPartyScript: getCredential(datum.fields[3]),
+    metadata: extractBytes(datum.fields[4]),
   };
 }
 
@@ -64,8 +93,8 @@ export function parseBlacklistDatum(datum: any): BlacklistDatum | null {
     return null;
   }
   return {
-    key: datum.fields[0].bytes,
-    next: datum.fields[1].bytes,
+    key: extractBytes(datum.fields[0]),
+    next: extractBytes(datum.fields[1]),
   };
 }
 

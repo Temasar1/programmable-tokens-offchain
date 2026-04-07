@@ -1,14 +1,14 @@
 {
   "blacklistMintBootstrap": {
     "txInput": {
-      "txHash": "2ced5257558d2be4ccf3b4344cb85dda7968ba6937f6c9546ca42c050f441b48",
-      "outputIndex": 1
+      "outputIndex": 2,
+      "txHash": "5b087861f37607eaf96f52e21711b0c166b6d0007f790d7b7e1c2278f6868d73"
     },
-    "adminPubKeyHash": "32e7e00eae28502a2aa271cf4202b1b01b94ca8efe642e380c93d5e2",
-    "scriptHash": "f0545b7d10dd074ddf09232407925f192bb5dafbe14ca2e0ea0f63dc"
+    "adminPubKeyHash": "2f7e08ff7f07192c54a25c0fe963eaab5b1e8f98df5926bab5b6446a",
+    "scriptHash": "b55287de5ac4b29e8e6a767860508d40fcbd5bda070ac9610a366cbe"
   },
   "blacklistSpendBootstrap": {
-    "blacklistMintScriptHash": "f0545b7d10dd074ddf09232407925f192bb5dafbe14ca2e0ea0f63dc",
-    "scriptHash": "38b1c326b4f70c7589cca3b2fdedbaf1124195819a304bb4bf337c1e"
+    "blacklistMintScriptHash": "b55287de5ac4b29e8e6a767860508d40fcbd5bda070ac9610a366cbe",
+    "scriptHash": "b4d56ff81aeaec7222384672dba8d637317b6120f210971ac50ac9b8"
   }
 }

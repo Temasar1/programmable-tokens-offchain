@@ -10,10 +10,12 @@ import {
 
 import { provider } from "../../../config";
 import { SubStandardScripts } from "../../deployment/subStandard";
-import { BlacklistBootstrap } from "../../types";
+import { BlacklistBootstrap, ProtocolBootstrapParams } from "../../types";
 import { walletConfig } from "../../utils";
+import { StandardScripts } from "../../deployment/standard";
 
-export const initializeBlacklist = async (
+export const registerBlacklist = async (
+  params: ProtocolBootstrapParams,
   wallet: IWallet,
   NetworkId: 0 | 1,
 ): Promise<{ unsignedTx: string; bootstrap: BlacklistBootstrap }> => {
@@ -37,6 +39,7 @@ export const initializeBlacklist = async (
   const adminAddr = deserializeAddress(adminAddress);
   const adminPubKeyHash = adminAddr.pubKeyHash;
 
+  const standardScript = new StandardScripts(NetworkId);
   const substandardScript = new SubStandardScripts(NetworkId);
   const blacklistMint = await substandardScript.blacklistMint(
     bootstrapInput,
@@ -47,6 +50,19 @@ export const initializeBlacklist = async (
     blacklistMintPolicyId,
   );
   const blacklistSpendAddress = blacklistSpend.address;
+  const substandardIssueAddress = (
+    await substandardScript.issuerAdmin(adminPubKeyHash)
+  ).rewardAddress;
+  console.log(substandardIssueAddress)
+  const programmableLogicbasePolicyId = (
+    await standardScript.programmableLogicBase(params)
+  ).policyId;
+  const substandardTransferAddress = (
+    await substandardScript.customTransfer(
+      programmableLogicbasePolicyId,
+      blacklistMintPolicyId,
+    )
+  ).rewardAddress;
 
   const blacklistInitDatum = conStr0([
     byteString(""),
@@ -74,6 +90,10 @@ export const initializeBlacklist = async (
 
     .txOut(blacklistSpendAddress, blacklistAssets)
     .txOutInlineDatumValue(blacklistInitDatum, "JSON")
+
+    .registerStakeCertificate(substandardIssueAddress)
+    .registerStakeCertificate(substandardTransferAddress)
+
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .setNetwork(NetworkId === 0 ? "preview" : "mainnet")
     .selectUtxosFrom(utilityUtxos)

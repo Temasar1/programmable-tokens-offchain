@@ -6,7 +6,6 @@ import {
   deserializeDatum,
   IWallet,
   MeshTxBuilder,
-  stringToHex,
   UTxO,
 } from "@meshsdk/core";
 import { deserializeAddress } from "@meshsdk/core-cst";
@@ -14,7 +13,6 @@ import { provider } from "../../../config";
 import {
   buildBlacklistScripts,
   parseBlacklistDatum,
-  selectEnoughAdaUtxos,
   walletConfig,
 } from "../../utils";
 import { BlacklistBootstrap } from "../../types";
@@ -23,12 +21,9 @@ export const addToBlacklist = async (
   blacklistBootstrap: BlacklistBootstrap,
   targetAddress: string,
   wallet: IWallet,
-  Network_id: 0 | 1,
+  Network_id: 0 | 1
 ): Promise<string> => {
-  const { changeAddress, collateral } = await walletConfig(wallet);
-
-  const adminUtxos = await selectEnoughAdaUtxos(wallet);
-  if (adminUtxos.length === 0) throw new Error("Not enough ADA UTxOs found");
+  const { changeAddress, collateral, walletUtxos } = await walletConfig(wallet);
 
   const addressToBlacklist = deserializeAddress(targetAddress);
   const targetStakingPkh = addressToBlacklist
@@ -40,11 +35,11 @@ export const addToBlacklist = async (
   const { blacklistMint, blacklistSpend } = await buildBlacklistScripts(
     Network_id,
     blacklistBootstrap.blacklistMintBootstrap.txInput,
-    blacklistBootstrap.blacklistMintBootstrap.adminPubKeyHash,
+    blacklistBootstrap.blacklistMintBootstrap.adminPubKeyHash
   );
 
   const blacklistUtxos = await provider.fetchAddressUTxOs(
-    blacklistSpend.address,
+    blacklistSpend.address
   );
 
   if (!blacklistUtxos?.length) {
@@ -101,6 +96,7 @@ export const addToBlacklist = async (
     fetcher: provider,
     evaluator: provider,
   });
+  txBuilder.txEvaluationMultiplier = 1.3;
 
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()
@@ -110,7 +106,7 @@ export const addToBlacklist = async (
     .txInInlineDatumPresent()
 
     .mintPlutusScriptV3()
-    .mint("1", blacklistMint.policyId, stringToHex(targetStakingPkh))
+    .mint("1", blacklistMint.policyId, targetStakingPkh)
     .mintingScript(blacklistMint.cbor)
     .mintRedeemerValue(mintRedeemer, "JSON")
 
@@ -121,10 +117,10 @@ export const addToBlacklist = async (
     .txOutInlineDatumValue(afterNode, "JSON")
 
     .requiredSignerHash(
-      blacklistBootstrap.blacklistMintBootstrap.adminPubKeyHash,
+      blacklistBootstrap.blacklistMintBootstrap.adminPubKeyHash
     )
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
-    .selectUtxosFrom(adminUtxos)
+    .selectUtxosFrom(walletUtxos)
     .setNetwork(Network_id === 0 ? "preview" : "mainnet")
     .changeAddress(changeAddress)
     .complete();

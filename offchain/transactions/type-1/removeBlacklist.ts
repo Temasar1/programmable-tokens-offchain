@@ -101,6 +101,7 @@ export const removeFromBlacklist = async (
     fetcher: provider,
     evaluator: provider,
   });
+  txBuilder.txEvaluationMultiplier = 1.3;
 
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()
@@ -116,7 +117,7 @@ export const removeFromBlacklist = async (
     .txInRedeemerValue(spendRedeemer, "JSON")
 
     .mintPlutusScriptV3()
-    .mint("-1", blacklistMint.policyId, stringToHex(credentialsToRemove))
+    .mint("-1", blacklistMint.policyId, credentialsToRemove)
     .mintingScript(blacklistMint.cbor)
     .mintRedeemerValue(mintRedeemer, "JSON")
 

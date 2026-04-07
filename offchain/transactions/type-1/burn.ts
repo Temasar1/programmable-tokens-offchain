@@ -69,15 +69,17 @@ export const burnProgrammableTokens = async (request: {
   if (!progTokenRegistry)
     throw new Error("Registry entry not found, token not registered");
 
+  const feePayerUtxo = walletUtxos.find(
+    (u) =>
+      BigInt(u.output.amount.find((a) => a.unit === "lovelace")?.quantity ?? "0") >
+      5_000_000n,
+  );
+  if (!feePayerUtxo) throw new Error("No UTXO with enough ADA for fees found");
+
   const protocolParamsUtxo = (await provider.fetchUTxOs(params.txHash, 0))?.[0];
   if (!protocolParamsUtxo) throw new Error("Protocol params missing");
 
-  // Sort spending inputs to determine on-chain index of the burn input
-  const sortedInputs = [...walletUtxos, utxoToBurn].sort(compareUtxos);
-  const burnIndex = sortedInputs.findIndex(
-    (u) => u.input.txHash === txhash && u.input.outputIndex === outputIndex,
-  );
-  if (burnIndex === -1) throw new Error("Could not determine burn input index");
+  const totalInputs = 2; // feePayerUtxo + utxoToBurn
 
   const sortedRefInputs = [protocolParamsUtxo, progTokenRegistry].sort(
     compareUtxos,
@@ -97,9 +99,8 @@ export const burnProgrammableTokens = async (request: {
 
   const programmableGlobalRedeemer = conStr1([
     integer(registryRefInputIndex),
-    list([integer(burnIndex)]),
-    integer(1),
-    integer(1),
+    integer(0), // outputs_start_idx
+    integer(totalInputs), // length_inputs
   ]);
 
   const returningAmount = utxoToBurn.output.amount
@@ -114,8 +115,10 @@ export const burnProgrammableTokens = async (request: {
     .filter((a) => BigInt(a.quantity) > 0n);
 
   const tx = new MeshTxBuilder({ fetcher: provider, evaluator: provider });
+  tx.txEvaluationMultiplier = 1.3;
 
-  tx.spendingPlutusScriptV3()
+  tx.txIn(feePayerUtxo.input.txHash, feePayerUtxo.input.outputIndex)
+    .spendingPlutusScriptV3()
     .txIn(utxoToBurn.input.txHash, utxoToBurn.input.outputIndex)
     .txInScript(programmableLogicBase.cbor)
     .txInInlineDatumPresent()
