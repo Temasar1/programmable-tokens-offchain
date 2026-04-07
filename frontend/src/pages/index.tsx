@@ -5,6 +5,7 @@ import { HeroPanel } from "@/components/HeroPanel";
 import { RegisterToken } from "@/components/RegisterToken";
 import { MintTokens } from "@/components/MintTokens";
 import { TransferToken } from "@/components/TransferToken";
+import { BurnToken } from "@/components/BurnToken";
 import { SeizeToken } from "@/components/SeizeToken";
 import { FreezeToken } from "@/components/FreezeToken";
 import { Blacklist } from "@/components/Blacklist";
@@ -13,6 +14,7 @@ type TabType =
   | "register"
   | "mint"
   | "transfer"
+  | "burn"
   | "seize"
   | "freeze"
   | "blacklist";
@@ -45,6 +47,12 @@ export default function Home() {
       inactiveColor: "bg-white text-blue-800 hover:bg-sky-50 border border-blue-200"
     },
     { 
+      id: "burn" as TabType, 
+      label: "Burn", 
+      activeColor: "from-orange-600 to-red-600",
+      inactiveColor: "bg-white text-orange-800 hover:bg-orange-50 border border-orange-200"
+    },
+    { 
       id: "seize" as TabType, 
       label: "Seize", 
       activeColor: "from-blue-900 to-sky-600",
@@ -72,6 +80,8 @@ export default function Home() {
         return <MintTokens />;
       case "transfer":
         return <TransferToken />;
+      case "burn":
+        return <BurnToken />;
       case "seize":
         return <SeizeToken />;
       case "freeze":

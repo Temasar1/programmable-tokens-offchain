@@ -14,7 +14,7 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["../programmable-tokens/**/*.ts"],
-  "exclude": ["../programmable-tokens/node_modules"]
+  "include": ["offchain/**/*.ts", "index.ts"],
+  "exclude": ["node_modules", "frontend"]
 }
 

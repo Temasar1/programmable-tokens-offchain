@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { useWallet } from "@meshsdk/react";
-import { transfer_programmable_token } from "../../../offchain/transactions/type-1";
+import { transferProgrammableToken } from "../../../offchain/transactions/type-1";
 import ProtocolBootstrapParams from "../../../offchain/protocol.json";
 import { TransactionResultPanel } from "./TransactionResultPanel";
 import getBalance, { TokenBalance } from "../lib/balance";
 import provider from "../lib/provider";
+import { substandardConfig } from "../lib/substandard";
 
 export const TransferToken = () => {
   const { wallet, connected, address } = useWallet();
@@ -66,13 +67,14 @@ export const TransferToken = () => {
     try {
       // Get unsigned transaction using type-1 function
       // formData.selectedToken is the full unit (policy ID + asset name hex)
-      const unsignedTx = await transfer_programmable_token(
+      const unsignedTx = await transferProgrammableToken(
         formData.selectedToken,
         formData.quantity,
         formData.recipientAddress,
         ProtocolBootstrapParams,
         0, // Network_id: 0 for preview/testnet
-        wallet
+        wallet,
+        substandardConfig.blacklistNodePolicyId,
       );
 
       // Sign and submit

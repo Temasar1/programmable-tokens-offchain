@@ -1,5 +1,4 @@
 import {
-  Asset,
   conStr0,
   deserializeDatum,
   integer,
@@ -8,173 +7,307 @@ import {
   POLICY_ID_LENGTH,
   UTxO,
   IWallet,
+  deserializeAddress,
 } from "@meshsdk/core";
-import { deserializeAddress } from "@meshsdk/core-cst";
 
 import { provider } from "../../../config";
-import { Cip113_scripts_standard } from "../../deployment/standard";
-import cip113_scripts_subStandard from "../../deployment/type1/subStandard";
+import { StandardScripts } from "../../deployment/standard";
+import { SubStandardScripts } from "../../deployment/subStandard";
 import { ProtocolBootstrapParams } from "../../types";
-import { getSmartWallet, parseRegistryDatum } from "../../utils";
+import {
+  getSmartWalletAddress,
+  parseBlacklistDatum,
+  parseRegistryDatum,
+  selectProgrammableTokenUtxos,
+  walletConfig,
+} from "../../utils";
 
-const transfer_programmable_token = async (
+const compareUtxos = (a: UTxO, b: UTxO): number =>
+  a.input.txHash !== b.input.txHash
+    ? a.input.txHash.localeCompare(b.input.txHash)
+    : a.input.outputIndex - b.input.outputIndex;
+
+export const transferProgrammableToken = async (
   unit: string,
   quantity: string,
   recipientAddress: string,
   params: ProtocolBootstrapParams,
-  Network_id: 0 | 1,
+  NetworkId: 0 | 1,
   wallet: IWallet,
+  blacklistNodePolicyId: string,
 ) => {
   const policyId = unit.substring(0, POLICY_ID_LENGTH);
-  const changeAddress = await wallet.getChangeAddress();
-  const walletUtxos = await wallet.getUtxos();
-  const collateral = (await wallet.getCollateral())[0];
+  const { changeAddress, walletUtxos, collateral } = await walletConfig(wallet);
 
-  if (!collateral) throw new Error("No collateral available");
-  if (!walletUtxos) throw new Error("Issuer wallet is empty");
+  const standard = new StandardScripts(NetworkId);
+  const substandard = new SubStandardScripts(NetworkId);
 
-  const standardScript = new Cip113_scripts_standard(Network_id);
-  const substandardScript = new cip113_scripts_subStandard(Network_id);
-  const logic_base = await standardScript.programmable_logic_base(params);
-  const logic_global = await standardScript.programmable_logic_global(params);
-  const registry_spend = await standardScript.registry_spend(params);
-  const substandard_transfer =
-    await substandardScript.transfer_transfer_withdraw();
+  const programmableLogicBase = await standard.programmableLogicBase(params);
+  const programmableLogicGlobal =
+    await standard.programmableLogicGlobal(params);
+  const registrySpend = await standard.registrySpend(params);
+  const substandardTransfer = await substandard.customTransfer(
+    params.programmableLogicBaseParams.scriptHash,
+    blacklistNodePolicyId,
+  );
+  const substandardTransferCbor = substandardTransfer.cbor;
 
-  const senderCredential = deserializeAddress(changeAddress)
-    .asBase()
-    ?.getStakeCredential().hash;
+  const senderCredential =
+    deserializeAddress(changeAddress).stakeCredentialHash;
+  if (!senderCredential)
+    throw new Error("Sender address must include a stake credential");
 
-  const senderAddress = await getSmartWallet(changeAddress, params, Network_id);
-  const targetAddress = await getSmartWallet(
+  const senderSmartWallet = await getSmartWalletAddress(
+    changeAddress,
+    params,
+    NetworkId,
+  );
+  const recipientSmartWallet = await getSmartWalletAddress(
     recipientAddress,
     params,
-    Network_id,
+    NetworkId,
   );
 
-  const registryUtxos = await provider.fetchAddressUTxOs(
-    registry_spend.address,
-  );
-
-  const progTokenRegistry = registryUtxos.find((utxo: UTxO) => {
-    const datum = deserializeDatum(utxo.output.plutusData!);
-    const parsedDatum = parseRegistryDatum(datum);
-    return parsedDatum?.key === policyId;
+  // Fetch contracts and UTxOs
+  const progTokenRegistry = (
+    await provider.fetchAddressUTxOs(registrySpend.address)
+  ).find((utxo: UTxO) => {
+    if (!utxo.output.plutusData) return false;
+    return (
+      parseRegistryDatum(deserializeDatum(utxo.output.plutusData))?.key ===
+      policyId
+    );
   });
-
-  if (!progTokenRegistry) {
+  if (!progTokenRegistry)
     throw new Error("Could not find registry entry for token");
-  }
 
-  const protocolParamsUtxos = await provider.fetchUTxOs(params.txHash, 0);
-  if (!protocolParamsUtxos)
-    throw new Error("Could not resolve protocol params");
-  const protocolParamsUtxo = protocolParamsUtxos[0];
+  const protocolParamsUtxo = (await provider.fetchUTxOs(params.txHash, 0))?.[0];
+  if (!protocolParamsUtxo) throw new Error("Could not resolve protocol params");
 
-  const senderProgTokenUtxos = await provider.fetchAddressUTxOs(senderAddress);
-  if (!senderProgTokenUtxos) {
+  const senderProgTokenUtxos =
+    await provider.fetchAddressUTxOs(senderSmartWallet);
+
+  if (!senderProgTokenUtxos?.length)
     throw new Error("No programmable tokens found at sender address");
-  }
 
-  let totalTokenBalance = 0;
-  senderProgTokenUtxos.forEach((utxo: UTxO) => {
-    const tokenAsset = utxo.output.amount.find((a) => a.unit === unit);
-    if (tokenAsset) totalTokenBalance += Number(tokenAsset.quantity);
-  });
+  const { selectedUtxos } = await selectProgrammableTokenUtxos(
+    senderProgTokenUtxos,
+    unit,
+    Number(quantity),
+  );
+  if (!selectedUtxos.length) throw new Error("Not enough funds");
 
-  const transferAmount = Number(quantity);
-  if (totalTokenBalance < transferAmount) throw new Error("Not enough funds");
+  // Sort all spending inputs together (admin + prog token UTxOs)
+  const sortedInputs = [...selectedUtxos].sort(compareUtxos);
 
-  let selectedUtxos: UTxO[] = [];
-  let selectedAmount = 0;
-  for (const utxo of senderProgTokenUtxos) {
-    if (selectedAmount >= transferAmount) break;
-    const tokenAsset = utxo.output.amount.find((a) => a.unit === unit);
-    if (tokenAsset) {
-      selectedUtxos.push(utxo);
-      selectedAmount += Number(tokenAsset.quantity);
+  // 1. Identify programmable input UTXOs and unique Policy IDs
+  const programmableInputs: UTxO[] = [];
+  const uniquePolicies: string[] = [];
+
+  for (const utxo of sortedInputs) {
+    // Treat all selectedUtxos as programmable inputs (since they were fetched from the smart wallet address)
+    programmableInputs.push(utxo);
+
+    for (const asset of utxo.output.amount) {
+      if (asset.unit === "lovelace") continue;
+      const p = asset.unit.substring(0, 56);
+      if (!uniquePolicies.includes(p)) uniquePolicies.push(p);
     }
   }
 
-  const returningAmount = selectedAmount - transferAmount;
+  // Sort unique policies lexicographically to match Aiken's assets.collect order
+  uniquePolicies.sort();
 
-  const registryProof = conStr0([integer(1)]);
-  const programmableLogicGlobalRedeemer = conStr0([list([registryProof])]);
-  const substandardTransferRedeemer = integer(200);
-  const spendingRedeemer = conStr0([]);
-  const tokenDatum = conStr0([]);
+  // 2. Resolve Blacklist proofs (one for EVERY programmable input UTXO)
+  const blacklistProofs: UTxO[] = [];
+  if (blacklistNodePolicyId) {
+    const blacklistSpend = await substandard.blacklistSpend(
+      blacklistNodePolicyId,
+    );
+    const blacklistUtxos = await provider.fetchAddressUTxOs(
+      blacklistSpend.address,
+    );
 
-  const recipientAssets: Asset[] = [
-    { unit: "lovelace", quantity: "1300000" },
-    { unit: unit, quantity: transferAmount.toString() },
-  ];
+    for (const utxo of programmableInputs) {
+      const stakingPkh = deserializeAddress(
+        utxo.output.address,
+      ).stakeCredentialHash;
+      if (!stakingPkh) throw new Error("UTXO missing stake credential");
 
-  const returningAssets: Asset[] = [{ unit: "lovelace", quantity: "1300000" }];
-  if (returningAmount > 0) {
-    returningAssets.push({
-      unit: unit,
-      quantity: returningAmount.toString(),
-    });
+      const proofUtxo = blacklistUtxos.find((bl: UTxO) => {
+        if (!bl.output.plutusData) return false;
+        const datum = parseBlacklistDatum(
+          deserializeDatum(bl.output.plutusData),
+        );
+        if (!datum) return false;
+
+        // Use stable lexicographical comparison (nodeKey < target < nodeNext)
+        // This precisely matches Aiken's less_than_bytearray behavior for hex strings
+        const isGreater = datum.key === "" || stakingPkh > datum.key;
+        const isLess = datum.next === "" || stakingPkh < datum.next;
+        return isGreater && isLess;
+      });
+
+      if (!proofUtxo) {
+        throw new Error(
+          `Blacklist proof not found for wallet ${stakingPkh}. Scanned ${blacklistUtxos.length} nodes at policy ${blacklistNodePolicyId}.`,
+        );
+      }
+      blacklistProofs.push(proofUtxo);
+    }
   }
 
-  const txBuilder = new MeshTxBuilder({
+  // 3. Resolve Registry proofs (one per unique policy ID, in sorted order)
+  const registryProofs: UTxO[] = [];
+  const registryUtxos = await provider.fetchAddressUTxOs(registrySpend.address);
+  for (const p of uniquePolicies) {
+    const registryNft = params.directoryMintParams.scriptHash + p;
+    const proofUtxo = registryUtxos.find((u) =>
+      u.output.amount.find((a) => a.unit === registryNft),
+    );
+    if (!proofUtxo) throw new Error(`Registry node not found for policy ${p}`);
+    registryProofs.push(proofUtxo);
+  }
+
+  // 4. Build Sorted Reference Inputs (deduplicate if same node covers multiple inputs)
+  const uniqueBlacklistProofs = [
+    ...new Map(
+      blacklistProofs.map((p) => [
+        `${p.input.txHash}#${p.input.outputIndex}`,
+        p,
+      ]),
+    ).values(),
+  ];
+
+  const sortedRefInputs = [
+    ...uniqueBlacklistProofs,
+    ...registryProofs,
+    protocolParamsUtxo,
+  ].sort(compareUtxos);
+
+  // 5. Build Redeemers
+  // SUBSTANDARD: One proof per input UTXO (len = programmableInputs.length)
+  const substandardTransferRedeemer = list(
+    blacklistProofs.map((p) => {
+      const idx = sortedRefInputs.findIndex(
+        (r) =>
+          r.input.txHash === p.input.txHash &&
+          r.input.outputIndex === p.input.outputIndex,
+      );
+      return conStr0([integer(idx)]);
+    }),
+  );
+
+  // GLOBAL: One proof per unique Policy ID (len = uniquePolicies.length)
+  const programmableGlobalRedeemer = conStr0([
+    list(
+      registryProofs.map((p) => {
+        const idx = sortedRefInputs.findIndex(
+          (r) =>
+            r.input.txHash === p.input.txHash &&
+            r.input.outputIndex === p.input.outputIndex,
+        );
+        return conStr0([integer(idx)]);
+      }),
+    ),
+  ]);
+
+  // Compute asset amounts
+  const totalTokens = selectedUtxos.reduce(
+    (sum, utxo) =>
+      sum +
+      BigInt(utxo.output.amount.find((a) => a.unit === unit)?.quantity ?? "0"),
+    0n,
+  );
+  const totalLovelace = selectedUtxos.reduce(
+    (sum, utxo) =>
+      sum +
+      BigInt(
+        utxo.output.amount.find((a) => a.unit === "lovelace")?.quantity ?? "0",
+      ),
+    0n,
+  );
+
+  if (totalTokens < BigInt(quantity)) throw new Error("Not enough funds");
+
+  // Output Balance Calculation ("ADA Recycling")
+  const recipientLovelace = 1500000n;
+  const remainingTokens = totalTokens - BigInt(quantity);
+
+  // Send the tokens and their ADA to the recipient
+  const recipientAssets = [
+    { unit: "lovelace", quantity: recipientLovelace.toString() },
+    { unit: unit, quantity: quantity },
+  ];
+
+  // Send the remaining tokens and the "recycled" ADA back to the sender
+  // We subtract the ADA we just sent to the recipient from the input total
+  const remainingLovelace = totalLovelace - recipientLovelace;
+  const returningAssets = [
+    {
+      unit: "lovelace",
+      quantity: (remainingLovelace > 1_000_000n
+        ? remainingLovelace
+        : 1_500_000n
+      ).toString(),
+    },
+    ...(remainingTokens > 0n
+      ? [{ unit: unit, quantity: remainingTokens.toString() }]
+      : []),
+  ];
+  console.log(senderCredential);
+
+  // Build TX
+  const tx = new MeshTxBuilder({
     fetcher: provider,
     evaluator: provider,
+    verbose: true,
   });
 
-  for (const utxo of selectedUtxos) {
-    txBuilder
-      .spendingPlutusScriptV3()
+  // Use the sorted inputs to ensure alignment with ledger canonical order
+  for (const utxo of sortedInputs) {
+    tx.spendingPlutusScriptV3()
       .txIn(utxo.input.txHash, utxo.input.outputIndex)
-      .txInScript(logic_base.cbor)
-      .txInRedeemerValue(spendingRedeemer, "JSON")
+      .txInScript(programmableLogicBase.cbor)
+      .txInRedeemerValue(conStr0([]), "JSON")
       .txInInlineDatumPresent();
   }
 
-  txBuilder
-    .withdrawalPlutusScriptV3()
-    .withdrawal(substandard_transfer.reward_address, "0")
-    .withdrawalScript(substandard_transfer._cbor)
+  // Withdrawals: Substandard (Proof) -> Global (Coordinator)
+  tx.withdrawalPlutusScriptV3()
+    .withdrawal(substandardTransfer.rewardAddress, "0")
+    .withdrawalScript(substandardTransferCbor)
     .withdrawalRedeemerValue(substandardTransferRedeemer, "JSON")
 
     .withdrawalPlutusScriptV3()
-    .withdrawal(logic_global.reward_address, "0")
-    .withdrawalScript(logic_global.cbor)
-    .withdrawalRedeemerValue(programmableLogicGlobalRedeemer, "JSON")
-    .requiredSignerHash(senderCredential!.toString())
+    .withdrawal(programmableLogicGlobal.rewardAddress, "0")
+    .withdrawalScript(programmableLogicGlobal.cbor)
+    .withdrawalRedeemerValue(programmableGlobalRedeemer, "JSON");
 
-    .txOut(changeAddress, [
-      {
-        unit: "lovelace",
-        quantity: "1000000",
-      },
-    ]);
-
-  if (returningAmount > 0) {
-    txBuilder
-      .txOut(senderAddress, returningAssets)
-      .txOutInlineDatumValue(tokenDatum, "JSON");
+  // Add outputs (Sender change then Recipient)
+  if (remainingTokens > 0n || remainingLovelace > 1_000_000n) {
+    tx.txOut(senderSmartWallet, returningAssets).txOutInlineDatumValue(
+      conStr0([]),
+      "JSON",
+    );
   }
 
-  txBuilder
-    .txOut(targetAddress, recipientAssets)
-    .txOutInlineDatumValue(tokenDatum, "JSON")
+  tx.txOut(recipientSmartWallet, recipientAssets).txOutInlineDatumValue(
+    conStr0([]),
+    "JSON",
+  );
 
-    .readOnlyTxInReference(
-      protocolParamsUtxo.input.txHash,
-      protocolParamsUtxo.input.outputIndex,
-    )
-    .readOnlyTxInReference(
-      progTokenRegistry.input.txHash,
-      progTokenRegistry.input.outputIndex,
-    )
+  // Reference Inputs (sorted protocol + registry + proofs)
+  for (const refInput of sortedRefInputs) {
+    tx.readOnlyTxInReference(refInput.input.txHash, refInput.input.outputIndex);
+  }
 
+  tx.requiredSignerHash(senderCredential)
+    .setFee("600000")
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .selectUtxosFrom(walletUtxos)
-    .setNetwork("preview")
+    .setNetwork(NetworkId === 0 ? "preview" : "mainnet")
     .changeAddress(changeAddress);
 
-  return await txBuilder.complete();
+  return await tx.complete();
 };
-
-export { transfer_programmable_token };
