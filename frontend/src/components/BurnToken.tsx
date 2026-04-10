@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
-import { useWallet } from "@meshsdk/react";
-import { burnProgrammableTokens } from "../../../offchain/transactions/type-1/burn";
-import ProtocolBootstrapParams from "../../../offchain/protocol.json";
+import { useWallet, useAddress } from "@meshsdk/react";
+import { resolveSmartWalletAddress } from "@meshsdk/contract";
 import { TransactionResultPanel } from "./TransactionResultPanel";
 import getBalance, { TokenBalance } from "../lib/balance";
 import provider from "../lib/provider";
-import { substandardConfig } from "../lib/substandard";
+import { handleTransaction } from "../lib/tx-handler";
+import { getContract } from "../lib/contract";
+import { deserializeAddress } from "@meshsdk/core";
 
 export const BurnToken = () => {
-  const { wallet, connected, address } = useWallet();
+  const { wallet, connected } = useWallet();
+  const address = useAddress();
   const [tokens, setTokens] = useState<TokenBalance[]>([]);
   const [loadingTokens, setLoadingTokens] = useState(false);
   const [formData, setFormData] = useState({
@@ -30,7 +32,7 @@ export const BurnToken = () => {
       try {
         const balanceResult = await getBalance(provider, address);
         const nonAdaTokens = balanceResult.tokens.filter(
-          (t) => t.unit !== "lovelace"
+          (t) => t.unit !== "lovelace",
         );
         setTokens(nonAdaTokens);
       } catch (err) {
@@ -52,7 +54,7 @@ export const BurnToken = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!connected || !wallet) {
+    if (!connected || !wallet || !address) {
       setError("Please connect your wallet first");
       return;
     }
@@ -64,51 +66,44 @@ export const BurnToken = () => {
 
     setIsLoading(true);
     setError(null);
-    setTxHash(null);
 
     try {
-      const policyId = selectedToken.policyId ?? formData.selectedToken.substring(0, 56);
-      const assetName = selectedToken.assetName ?? (() => {
-        const hex = formData.selectedToken.substring(56);
-        let decoded = "";
-        for (let i = 0; i < hex.length; i += 2) {
-          const charCode = parseInt(hex.substring(i, i + 2), 16);
-          if (charCode > 0 && charCode < 127) {
-            decoded += String.fromCharCode(charCode);
-          }
-        }
-        return decoded.trim() || hex;
-      })();
+      const contract = getContract(wallet);
+      const issuerAdminPkh = deserializeAddress(address).pubKeyHash;
 
-      const unsignedTx = await burnProgrammableTokens({
-        params: ProtocolBootstrapParams,
-        tokenPolicyId: policyId,
-        assetName,
-        quantity: formData.quantity,
-        wallet,
-        networkId: 0,
-        issuerAdminPkh: substandardConfig.issuerAdminPkh,
-      });
-
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
-
-      const hashString = typeof hash === "string" ? hash : String(hash);
-      if (hashString && hashString !== "[object Object]") {
-        setTxHash(hashString);
-        console.log("Burn Tx Hash:", hashString);
-      } else {
-        throw new Error("Invalid transaction hash received");
-      }
-    } catch (err: unknown) {
-      console.error("Error burning tokens:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to burn tokens"
+      // 1. Resolve smart wallet and fetch UTxO for the token
+      const smartWalletAddr = await resolveSmartWalletAddress(address, 0);
+      const utxos = await provider.fetchAddressUTxOs(smartWalletAddr);
+      const utxoToBurn = utxos.find((u) =>
+        u.output.amount.some((a) => a.unit === selectedToken.unit),
       );
-    } finally {
+
+      if (!utxoToBurn || !selectedToken) {
+        throw new Error("Target token UTxO not found in smart wallet");
+      }
+
+      // 2. Call contract method
+      const txHex = await contract.burnToken(
+        selectedToken.assetName || "",
+        formData.quantity,
+        utxoToBurn.input.txHash,
+        utxoToBurn.input.outputIndex,
+        issuerAdminPkh
+      );
+
+      if (txHex) {
+        await handleTransaction(
+          Promise.resolve(txHex),
+          wallet,
+          { setIsLoading, setTxHash, setError },
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to burn tokens");
       setIsLoading(false);
     }
   };
+
 
   const handleCloseResult = () => {
     setTxHash(null);
@@ -118,9 +113,7 @@ export const BurnToken = () => {
   return (
     <>
       <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-orange-200">
-        <h3 className="text-2xl font-bold text-orange-900 mb-6">
-          Burn Tokens
-        </h3>
+        <h3 className="text-2xl font-bold text-orange-900 mb-6">Burn Tokens</h3>
         <p className="text-sm text-orange-700 mb-4">
           Permanently destroy programmable tokens. Only tokens in your smart
           wallet can be burned.

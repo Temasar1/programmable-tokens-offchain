@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { useWallet } from "@meshsdk/react";
-import { mintProgrammableTokens } from "../../../offchain/transactions/type-1";
-import ProtocolBootstrapParams from "../../../offchain/protocol.json";
+import { useWallet, useAddress } from "@meshsdk/react";
+import { resolveSmartWalletAddress } from "@meshsdk/contract";
 import { TransactionResultPanel } from "./TransactionResultPanel";
-import { substandardConfig } from "../lib/substandard";
+import { handleTransaction } from "../lib/tx-handler";
+import { getContract } from "../lib/contract";
+import { deserializeAddress } from "@meshsdk/core";
 
 export const MintTokens = () => {
   const { wallet, connected } = useWallet();
+  const address = useAddress();
+  
   const [formData, setFormData] = useState({
     assetName: "",
     quantity: "1",
@@ -18,47 +21,39 @@ export const MintTokens = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!connected || !wallet) {
+
+    if (!connected || !wallet || !address) {
       setError("Please connect your wallet first");
       return;
     }
 
     setIsLoading(true);
-    setError(null);
-    setTxHash(null);
-
     try {
-      // Get unsigned transaction using type-1 function
-      const unsignedTx = await mintProgrammableTokens(
-        ProtocolBootstrapParams,
+      const contract = getContract(wallet);
+      const recipientAddress = formData.recipientAddress || address;
+      const smartAddress = await resolveSmartWalletAddress(recipientAddress, 0);
+      const issuerAdminPkh = deserializeAddress(address).pubKeyHash;
+
+      const txHex = await contract.mintToken(
         formData.assetName,
         formData.quantity,
-        wallet,
-        0, // Network_id: 0 for preview/testnet
-        formData.recipientAddress || null,
-        substandardConfig.issuerAdminPkh,
+        issuerAdminPkh,
+        smartAddress
       );
 
-      // Sign and submit
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
-      
-      // Ensure hash is a string and not an object
-      const hashString = typeof hash === 'string' ? hash : String(hash);
-      if (hashString && hashString !== '[object Object]') {
-        setTxHash(hashString);
-        console.log("Tx Hash:", hashString);
-      } else {
-        throw new Error("Invalid transaction hash received");
+      if (txHex) {
+        await handleTransaction(
+          Promise.resolve(txHex),
+          wallet,
+          { setIsLoading, setTxHash, setError },
+        );
       }
-    } catch (err: unknown) {
-      console.error("Error minting tokens:", err);
+    } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to mint tokens");
-    } finally {
       setIsLoading(false);
     }
   };
+
 
   const handleCloseResult = () => {
     setTxHash(null);

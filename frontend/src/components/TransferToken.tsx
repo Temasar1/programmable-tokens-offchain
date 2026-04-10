@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useWallet } from "@meshsdk/react";
-import { transferProgrammableToken } from "../../../offchain/transactions/type-1";
-import ProtocolBootstrapParams from "../../../offchain/protocol.json";
+import { resolveSmartWalletAddress } from "@meshsdk/contract";
 import { TransactionResultPanel } from "./TransactionResultPanel";
+import { handleTransaction } from "../lib/tx-handler";
 import getBalance, { TokenBalance } from "../lib/balance";
 import provider from "../lib/provider";
-import { substandardConfig } from "../lib/substandard";
+import { getContract } from "../lib/contract";
 
 export const TransferToken = () => {
   const { wallet, connected, address } = useWallet();
@@ -31,7 +31,9 @@ export const TransferToken = () => {
       try {
         const balanceResult = await getBalance(provider, address);
         // Filter out ADA/lovelace tokens
-        const nonAdaTokens = balanceResult.tokens.filter(t => t.unit !== "lovelace");
+        const nonAdaTokens = balanceResult.tokens.filter(
+          (t) => t.unit !== "lovelace",
+        );
         setTokens(nonAdaTokens);
       } catch (error) {
         console.error("Error fetching tokens:", error);
@@ -44,13 +46,15 @@ export const TransferToken = () => {
     fetchTokens();
   }, [connected, wallet, address]);
 
-  const selectedToken = tokens.find(t => t.unit === formData.selectedToken);
-  const availableQuantity = selectedToken ? parseInt(selectedToken.quantity) : 0;
+  const selectedToken = tokens.find((t) => t.unit === formData.selectedToken);
+  const availableQuantity = selectedToken
+    ? parseInt(selectedToken.quantity)
+    : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!connected || !wallet) {
+
+    if (!connected || !wallet || !address) {
       setError("Please connect your wallet first");
       return;
     }
@@ -61,41 +65,35 @@ export const TransferToken = () => {
     }
 
     setIsLoading(true);
-    setError(null);
     setTxHash(null);
 
     try {
-      // Get unsigned transaction using type-1 function
-      // formData.selectedToken is the full unit (policy ID + asset name hex)
-      const unsignedTx = await transferProgrammableToken(
+      const contract = getContract(wallet);
+      const senderSmartAddress = await resolveSmartWalletAddress(address, 0);
+      const recipientSmartAddress = await resolveSmartWalletAddress(formData.recipientAddress, 0);
+      
+      const txHex = await contract.transferToken(
         formData.selectedToken,
         formData.quantity,
-        formData.recipientAddress,
-        ProtocolBootstrapParams,
-        0, // Network_id: 0 for preview/testnet
-        wallet,
-        substandardConfig.blacklistNodePolicyId,
+        senderSmartAddress,
+        recipientSmartAddress
       );
 
-      // Sign and submit
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
-      
-      // Ensure hash is a string and not an object
-      const hashString = typeof hash === 'string' ? hash : String(hash);
-      if (hashString && hashString !== '[object Object]') {
-        setTxHash(hashString);
-        console.log("Tx Hash:", hashString);
-      } else {
-        throw new Error("Invalid transaction hash received");
+      if (txHex) {
+        await handleTransaction(
+          Promise.resolve(txHex),
+          wallet,
+          { setIsLoading, setTxHash, setError },
+        );
       }
-    } catch (err: unknown) {
-      console.error("Error transferring token:", err);
-      setError(err instanceof Error ? err.message : "Failed to transfer token");
-    } finally {
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to transfer tokens",
+      );
       setIsLoading(false);
     }
   };
+
 
   const handleCloseResult = () => {
     setTxHash(null);
@@ -105,7 +103,9 @@ export const TransferToken = () => {
   return (
     <>
       <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-blue-200">
-        <h3 className="text-2xl font-bold text-blue-900 mb-6">Transfer Token</h3>
+        <h3 className="text-2xl font-bold text-blue-900 mb-6">
+          Transfer Token
+        </h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-blue-800 mb-2">
@@ -124,7 +124,11 @@ export const TransferToken = () => {
                 <select
                   value={formData.selectedToken}
                   onChange={(e) =>
-                    setFormData({ ...formData, selectedToken: e.target.value, quantity: "" })
+                    setFormData({
+                      ...formData,
+                      selectedToken: e.target.value,
+                      quantity: "",
+                    })
                   }
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-sm"
                   required
@@ -132,7 +136,8 @@ export const TransferToken = () => {
                   <option value="">-- Select a token --</option>
                   {tokens.map((token) => (
                     <option key={token.unit} value={token.unit}>
-                      {token.assetName || "Unknown Token"} ({parseInt(token.quantity).toLocaleString()} available)
+                      {token.assetName || "Unknown Token"} (
+                      {parseInt(token.quantity).toLocaleString()} available)
                     </option>
                   ))}
                 </select>
@@ -141,7 +146,9 @@ export const TransferToken = () => {
                     <div className="text-xs text-blue-800 space-y-1">
                       <div>
                         <span className="font-semibold">Policy ID:</span>{" "}
-                        <span className="font-mono break-all">{selectedToken.policyId}</span>
+                        <span className="font-mono break-all">
+                          {selectedToken.policyId}
+                        </span>
                       </div>
                       <div>
                         <span className="font-semibold">Asset Name (Hex):</span>{" "}
@@ -150,12 +157,16 @@ export const TransferToken = () => {
                         </span>
                       </div>
                       <div>
-                        <span className="font-semibold">Available Quantity:</span>{" "}
+                        <span className="font-semibold">
+                          Available Quantity:
+                        </span>{" "}
                         {parseInt(selectedToken.quantity).toLocaleString()}
                       </div>
                       <div>
                         <span className="font-semibold">Full Unit:</span>{" "}
-                        <span className="font-mono break-all text-xs">{selectedToken.unit}</span>
+                        <span className="font-mono break-all text-xs">
+                          {selectedToken.unit}
+                        </span>
                       </div>
                     </div>
                   </div>
