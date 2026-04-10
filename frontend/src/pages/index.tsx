@@ -145,8 +145,8 @@ export default function Home() {
         <div className="mb-8">{renderContent()}</div>
 
         {/* Footer */}
-        <div className="text-center text-blue-700 text-sm">
-          <p>Programmable Tokens Interface - UI Only (No Transaction Logic)</p>
+        <div className="text-center text-blue-700 text-sm py-8">
+          <p>Programmable Tokens Interface - Functional Transaction Layer</p>
         </div>
       </div>
     </div>

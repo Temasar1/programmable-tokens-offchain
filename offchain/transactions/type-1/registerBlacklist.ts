@@ -50,20 +50,6 @@ export const registerBlacklist = async (
     blacklistMintPolicyId,
   );
   const blacklistSpendAddress = blacklistSpend.address;
-  const substandardIssueAddress = (
-    await substandardScript.issuerAdmin(adminPubKeyHash)
-  ).rewardAddress;
-  console.log(substandardIssueAddress)
-  const programmableLogicbasePolicyId = (
-    await standardScript.programmableLogicBase(params)
-  ).policyId;
-  const substandardTransferAddress = (
-    await substandardScript.customTransfer(
-      programmableLogicbasePolicyId,
-      blacklistMintPolicyId,
-    )
-  ).rewardAddress;
-
   const blacklistInitDatum = conStr0([
     byteString(""),
     byteString("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
@@ -90,9 +76,6 @@ export const registerBlacklist = async (
 
     .txOut(blacklistSpendAddress, blacklistAssets)
     .txOutInlineDatumValue(blacklistInitDatum, "JSON")
-
-    .registerStakeCertificate(substandardIssueAddress)
-    .registerStakeCertificate(substandardTransferAddress)
 
     .txInCollateral(collateral.input.txHash, collateral.input.outputIndex)
     .setNetwork(NetworkId === 0 ? "preview" : "mainnet")

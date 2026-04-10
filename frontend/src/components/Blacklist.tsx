@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { useWallet } from "@meshsdk/react";
-import { addToBlacklist } from "../../../offchain/transactions/type-1/addBlacklist";
-import { removeFromBlacklist } from "../../../offchain/transactions/type-1/removeBlacklist";
-import BlacklistBootstrapJson from "../../../offchain/blacklist.json";
-import { BlacklistBootstrap } from "../../../offchain/types";
+import { resolveSmartWalletAddress } from "@meshsdk/contract";
+import blacklistData from "../../../offchain/blacklist.json";
 import { TransactionResultPanel } from "./TransactionResultPanel";
-
-const blacklistBootstrap = BlacklistBootstrapJson as unknown as BlacklistBootstrap;
+import { handleTransaction } from "../lib/tx-handler";
+import { getContract } from "../lib/contract";
 
 export const Blacklist = () => {
   const { wallet, connected } = useWallet();
@@ -32,28 +30,31 @@ export const Blacklist = () => {
     }
 
     setIsLoading(true);
-    setError(null);
-    setTxHash(null);
-
     try {
-      const unsignedTx =
-        formData.action === "add"
-          ? await addToBlacklist(blacklistBootstrap, formData.address, wallet, 0)
-          : await removeFromBlacklist(formData.address, blacklistBootstrap, wallet, 0);
+      const contract = getContract(wallet);
+      const smartAddress = await resolveSmartWalletAddress(formData.address, 0);
 
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
-
-      const hashString = typeof hash === "string" ? hash : String(hash);
-      if (hashString && hashString !== "[object Object]") {
-        setTxHash(hashString);
+      let txHex: string;
+      if (formData.action === "add") {
+        txHex = await contract.blacklistSmartWalletAddress(smartAddress);
       } else {
-        throw new Error("Invalid transaction hash received");
+        txHex = await contract.whitelistSmartWalletAddress(smartAddress);
       }
-    } catch (err: unknown) {
-      console.error("Blacklist error:", err);
-      setError(err instanceof Error ? err.message : "Transaction failed");
-    } finally {
+
+      if (txHex) {
+        await handleTransaction(
+          Promise.resolve(txHex),
+          wallet,
+          { setIsLoading, setTxHash, setError },
+          true,
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to process blacklist action",
+      );
       setIsLoading(false);
     }
   };
@@ -112,13 +113,13 @@ export const Blacklist = () => {
             <div>
               <span className="font-semibold">Admin PKH:</span>{" "}
               <span className="font-mono break-all">
-                {blacklistBootstrap.blacklistMintBootstrap.adminPubKeyHash}
+                {blacklistData.blacklistMintBootstrap.adminPubKeyHash}
               </span>
             </div>
             <div>
               <span className="font-semibold">Mint Script Hash:</span>{" "}
               <span className="font-mono break-all">
-                {blacklistBootstrap.blacklistMintBootstrap.scriptHash}
+                {blacklistData.blacklistMintBootstrap.scriptHash}
               </span>
             </div>
           </div>
@@ -135,8 +136,8 @@ export const Blacklist = () => {
             {isLoading
               ? "Processing..."
               : formData.action === "add"
-              ? "Add to Blacklist"
-              : "Remove from Blacklist"}
+                ? "Add to Blacklist"
+                : "Remove from Blacklist"}
           </button>
         </form>
       </div>
@@ -149,3 +150,4 @@ export const Blacklist = () => {
     </>
   );
 };
+
